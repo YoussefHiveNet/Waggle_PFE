@@ -2,11 +2,15 @@
 from fastapi import FastAPI
 from agent.llm import ping as llm_ping
 from connectors.postgres import ping as db_ping
-from api.routes.connect import router as connect_router
+from api.routes.connect  import router as connect_router
+from api.routes.schema   import router as schema_router
+from api.routes.semantic import router as semantic_router
 
 app = FastAPI(title="Waggle API", version="0.1.0")
 
 app.include_router(connect_router)
+app.include_router(schema_router)
+app.include_router(semantic_router)
 
 @app.get("/health")
 async def health():
