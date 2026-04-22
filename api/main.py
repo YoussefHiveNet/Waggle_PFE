@@ -6,6 +6,7 @@ from api.routes.connect  import router as connect_router
 from api.routes.schema   import router as schema_router
 from api.routes.semantic import router as semantic_router
 from api.routes.query    import router as query_router
+from api.routes.session  import router as session_router
 
 app = FastAPI(title="Waggle API", version="0.1.0")
 
@@ -13,6 +14,8 @@ app.include_router(connect_router)
 app.include_router(schema_router)
 app.include_router(semantic_router)
 app.include_router(query_router)
+app.include_router(session_router)
+
 
 @app.get("/health")
 async def health():
