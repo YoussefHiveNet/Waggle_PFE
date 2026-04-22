@@ -1,4 +1,6 @@
 # agent/tools/semantic_tool.py
+from __future__ import annotations
+from typing import Optional
 """
 semantic_tool.py
 
@@ -108,7 +110,7 @@ Respond ONLY as valid JSON:
 
 async def generate_semantic_model(
     connection_id: str,
-    business_rules: dict | None = None
+    business_rules: Optional[dict] = None
 ) -> dict:
     """
     Full pipeline: schema → classify → questions → assemble → save.

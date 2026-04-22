@@ -1,4 +1,5 @@
 # agent/tools/schema_tool.py
+from __future__ import annotations
 """
 schema_tool.py
 

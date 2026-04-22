@@ -63,7 +63,7 @@ class SemanticEngine:
                 for m in cube.measures:
                     desc = f" — {m.description}" if m.description else ""
                     lines.append(
-                        f"    {m.name}: {m.to_sql_expression()}{desc}"
+                        f"    {m.name}: {m.sql}{desc}"
                     )
             if cube.joins:
                 lines.append("  Joins:")

@@ -1,4 +1,6 @@
 # api/routes/semantic.py
+from __future__ import annotations
+from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from agent.tools.semantic_tool import generate_semantic_model
@@ -8,7 +10,7 @@ router  = APIRouter()
 _engine = SemanticEngine()
 
 class SemanticGenerateRequest(BaseModel):
-    business_rules: dict | None = None
+    business_rules: Optional[dict] = None
 
 @router.post("/semantic/{connection_id}")
 async def generate_semantic(
