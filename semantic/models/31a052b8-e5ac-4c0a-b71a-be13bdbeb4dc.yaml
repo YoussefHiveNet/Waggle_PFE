@@ -1,0 +1,90 @@
+cubes:
+- name: orders
+  sql_table: orders
+  joins:
+  - name: users
+    sql: orders.user_id = users.id
+    relationship: many_to_one
+  dimensions:
+  - name: status
+    sql: orders.status
+    type: string
+    description: Order status
+  - name: user_email
+    sql: users.email
+    type: string
+    description: User email
+  - name: user_country
+    sql: users.country
+    type: string
+    description: User country
+  - name: user_plan
+    sql: users.plan
+    type: string
+    description: User plan
+  measures:
+  - name: revenue
+    sql: SUM(CASE WHEN orders.status = 'completed' THEN orders.amount ELSE 0 END)
+    type: sum
+    description: Total revenue from completed orders
+  - name: order_count
+    sql: COUNT(orders.id)
+    type: count
+    description: Total number of orders
+  - name: average_order_value
+    sql: AVG(orders.amount)
+    type: avg
+    description: Average order value
+- name: users
+  sql_table: users
+  joins: []
+  dimensions:
+  - name: email
+    sql: users.email
+    type: string
+    description: User email
+  - name: country
+    sql: users.country
+    type: string
+    description: User country
+  - name: plan
+    sql: users.plan
+    type: string
+    description: User plan
+  measures:
+  - name: active_user_count
+    sql: COUNT(CASE WHEN users.last_login >= NOW() - INTERVAL '30 day' THEN users.id
+      ELSE NULL END)
+    type: count
+    description: Number of active users in the last 30 days
+- name: products
+  sql_table: products
+  joins: []
+  dimensions:
+  - name: name
+    sql: products.name
+    type: string
+    description: Product name
+  - name: category
+    sql: products.category
+    type: string
+    description: Product category
+  measures:
+  - name: total_price
+    sql: SUM(products.price)
+    type: sum
+    description: Total price of all products
+  - name: average_price
+    sql: AVG(products.price)
+    type: avg
+    description: Average price of all products
+assertions:
+- column: revenue
+  op: gte
+  value: 0
+- column: order_count
+  op: gte
+  value: 0
+- column: active_user_count
+  op: gte
+  value: 0
