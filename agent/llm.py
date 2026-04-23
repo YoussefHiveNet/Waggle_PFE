@@ -1,3 +1,5 @@
+# agent/llm.py
+from __future__ import annotations
 import httpx
 from openai import AsyncOpenAI
 from config import LLMConfig
@@ -14,15 +16,31 @@ def get_client() -> AsyncOpenAI:
         )
     return _client
 
-async def generate(prompt: str, system: str = "") -> str:
-    messages = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
+async def generate(
+    prompt: str,
+    system: str = "",
+    messages: list[dict] | None = None
+) -> str:
+    """
+    Call the LLM.
+    - If messages is provided, use it directly (multi-turn mode)
+    - Otherwise build from system + prompt (single-turn mode)
+    """
+    if messages is not None:
+        # Multi-turn: inject system at front if provided
+        full_messages = []
+        if system:
+            full_messages.append({"role": "system", "content": system})
+        full_messages.extend(messages)
+    else:
+        full_messages = []
+        if system:
+            full_messages.append({"role": "system", "content": system})
+        full_messages.append({"role": "user", "content": prompt})
 
     response = await get_client().chat.completions.create(
         model=LLMConfig.model,
-        messages=messages,
+        messages=full_messages,
         temperature=LLMConfig.temperature,
         max_tokens=LLMConfig.max_tokens,
     )

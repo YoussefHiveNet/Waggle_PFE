@@ -1,4 +1,7 @@
 # api/routes/session.py
+from __future__ import annotations
+
+from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from agent.session import create_session, get_session, list_sessions
@@ -26,6 +29,6 @@ async def get_session_info(session_id: str):
     }
 
 @router.get("/sessions")
-async def sessions(connection_id: str | None = None):
+async def sessions(connection_id: Optional[str] = None):
     """List all sessions, optionally filtered by connection."""
     return {"sessions": list_sessions(connection_id)}

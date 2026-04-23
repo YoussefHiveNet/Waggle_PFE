@@ -2,35 +2,51 @@
 from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from agent.tools.query_tool import run_query
+from agent.runtime import run_turn
+from agent.session import get_session, create_session
 
 router = APIRouter()
 
-
 class QueryRequest(BaseModel):
-    question: str
-
+    question:   str
+    session_id: str | None = None  # optional — creates new session if absent
 
 @router.post("/query/{connection_id}")
 async def query(connection_id: str, body: QueryRequest):
     """
-    Natural language → SQL → validated results.
+    Main query endpoint.
 
-    Returns:
-      sql               — the generated SQL
-      data              — list of result rows as dicts
-      row_count         — number of rows
-      validation_report — checks run, failures, confidence
-      confidence        — float 0–1
-      attempts          — how many LLM retries were needed
+    Pass session_id to continue a conversation.
+    Omit session_id to start a fresh one.
+
+    The agent will:
+    1. Decide which tool to call
+    2. Execute it
+    3. Return a natural language response + raw data
     """
     try:
-        result = await run_query(connection_id, body.question)
-        if "error" in result:
-            raise HTTPException(status_code=422, detail=result)
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        # Get or create session
+        if body.session_id:
+            session = get_session(body.session_id)
+            if not session:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Session {body.session_id} not found"
+                )
+        else:
+            session = create_session(connection_id)
+
+        # Run the harness loop
+        result = await run_turn(session, body.question)
+
+        return {
+            "question":   body.question,
+            "response":   result["response"],
+            "tool_calls": result["tool_calls"],
+            "session_id": result["session_id"],
+            "tokens_used": result["tokens_used"]
+        }
+
     except HTTPException:
         raise
     except Exception as e:

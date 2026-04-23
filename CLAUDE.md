@@ -30,16 +30,18 @@ waggle/
 │   └── routes/
 │       ├── connect.py           # POST /connect, GET /connect/{id}
 │       ├── schema.py            # GET /schema/{id}, /schema/{id}/llm-context
-│       └── semantic.py          # POST /semantic/{id}  ← next to build
+│       ├── semantic.py          # POST/GET/DELETE /semantic/{id}
+│       ├── session.py           # POST /session, GET /session/{id}, GET /sessions
+│       └── query.py             # POST /query/{id}  ← not yet wired
 │
 ├── agent/
 │   ├── llm.py                   # OpenAI-compat client (Groq / Hivenet)
+│   ├── session.py               # JSONL persistence — one file per session
+│   ├── context.py               # Token estimation + compaction
 │   ├── runtime.py               # Harness loop  ← not yet built
-│   ├── context.py               # Token tracking + compaction  ← not yet
-│   ├── session.py               # JSONL persistence  ← not yet
 │   └── tools/
 │       ├── schema_tool.py       # Schema extraction + LLM formatting
-│       ├── semantic_tool.py     # LLM generates YAML from schema  ← in progress
+│       ├── semantic_tool.py     # LLM generates YAML from schema
 │       └── query_tool.py        # NL → SQL → validate  ← not yet built
 │
 ├── connectors/
@@ -57,7 +59,8 @@ waggle/
 │
 ├── data/
 │   ├── connections.json         # Auto-generated connection store
-│   └── schemas/                 # Cached extracted schemas per connection_id
+│   ├── schemas/                 # Cached extracted schemas per connection_id
+│   └── sessions/                # One .jsonl file per session
 │
 ├── config.py                    # LLMConfig + DBConfig from .env
 ├── requirements.txt
@@ -77,6 +80,7 @@ waggle/
 | DB (cloud) | BigQuery | Free 1TB/month, internship access |
 | Semantic layer | Custom YAML engine | Budget reasons + capstone learning value |
 | SQL parsing | sqlglot | Free, pure Python, multi-dialect |
+| Session format | JSONL | Appendable, human-readable, same format as Claude Code / OpenAI evals |
 | Session tracking | GitHub Issues + Milestones | Doubles as capstone journal |
 | Frontend | React + TypeScript | Already built, pre-exists |
 
@@ -119,6 +123,17 @@ waggle/
 - Cross-query and LLM sanity checks cost tokens
 - If cheap checks fail → skip expensive ones → save budget
 
+### 9. JSONL for session persistence
+- Each turn is appended as one JSON line — never rewrites the whole file
+- Survives server restarts: `get_session()` checks memory first, then reloads from disk
+- `list_sessions()` globs `data/sessions/*.jsonl` so it works after restart too
+- File is touched (created empty) on session creation so listing works before any messages
+
+### 10. Token compaction threshold = 6000 (conservative)
+- Groq free tier has per-request limits; 6000 estimated tokens is a safe ceiling
+- On compaction: old messages are summarized by LLM, last 6 messages kept verbatim
+- Session file is rewritten to match — disk and memory always in sync
+
 ---
 
 ## Milestone Map
@@ -126,9 +141,9 @@ waggle/
 | Milestone | Scope | Status |
 |---|---|---|
 | **M1** | Scaffolding + DB connection | ✅ Done |
-| **M2** | Schema extraction + Semantic YAML | 🔄 In Progress |
-| **M3** | Agent harness + query tool | ⬜ Not started |
-| **M4** | Validation engine | ⬜ Not started |
+| **M2** | Schema extraction + Semantic YAML | ✅ Done |
+| **M3** | Agent harness + query tool | 🔄 In Progress (Day 7 left) |
+| **M4** | Validation engine | ✅ Done (built alongside Day 6) |
 | **M5** | React frontend integration | ⬜ Not started |
 | **M6** | BigQuery connector | ⬜ Not started |
 | **M7** | Polish, testing, demo | ⬜ Not started |
@@ -154,7 +169,7 @@ waggle/
 
 ### Day 2 — /connect endpoint ✅
 **Files created:** `api/routes/connect.py`, `connectors/store.py`  
-**Files modified:** `connectors/postgres.py` (added `test_connection`, `fetch_with_config`), `api/main.py`
+**Files modified:** `connectors/postgres.py`, `api/main.py`
 
 **What was built:**
 - `POST /connect` — validates credentials, stores connection, returns `connection_id`
@@ -171,33 +186,20 @@ connection_id: 31a052b8-e5ac-4c0a-b71a-be13bdbeb4dc  ✅
 
 ### Day 3 — Schema extraction ✅
 **Files created:** `agent/tools/schema_tool.py`, `api/routes/schema.py`  
-**Files modified:** `connectors/postgres.py` (added `extract_schema`), `api/main.py`
+**Files modified:** `connectors/postgres.py`, `api/main.py`
 
 **What was built:**
-- `extract_schema(config)` — reads PostgreSQL `information_schema`, returns structured dict with:
-  - Tables, columns, data types
-  - Primary keys (marked `primary_key: true`)
-  - Foreign keys (marked with `foreign_table` + `foreign_column`)
-  - 3 sample rows per table
-  - Approximate row counts
-- `schema_tool.py`:
-  - `get_schema(connection_id, force_refresh)` — with file cache in `data/schemas/`
-  - `format_for_llm(schema)` — token-efficient string (excludes nullability/defaults, keeps FK annotations + samples)
-  - `get_foreign_keys(schema)` — flat list of FK relationships
-- `GET /schema/{id}` — returns full schema JSON
-- `GET /schema/{id}/llm-context` — returns exactly what the LLM sees (debug endpoint)
+- `extract_schema(config)` — reads PostgreSQL `information_schema`, returns structured dict with tables, columns, PKs, FKs, 3 sample rows, row counts
+- `schema_tool.py` — `get_schema()` with file cache, `format_for_llm()`, `get_foreign_keys()`
+- `GET /schema/{id}` — full schema JSON
+- `GET /schema/{id}/llm-context` — token-efficient string (debug endpoint)
 
-**Test DB in `waggle_dev` (Mac):**
-```sql
-tables: users, orders, products
-FK: orders.user_id → users.id
-Sample data: 3 users, 4 orders, 2 products
-```
+**Test DB in `waggle_dev`:** tables: `users`, `orders`, `products` — FK: `orders.user_id → users.id`
 
 **Test result:**
 ```
-GET /schema/{id}            → 3 tables, all columns + FKs + sample rows  ✅
-GET /schema/{id}/llm-context → compact token-efficient string             ✅
+GET /schema/{id}             → 3 tables, all columns + FKs + sample rows  ✅
+GET /schema/{id}/llm-context → compact token-efficient string              ✅
 ```
 
 ---
@@ -207,86 +209,133 @@ GET /schema/{id}/llm-context → compact token-efficient string             ✅
 **Files modified:** `api/main.py`
 
 **What was built:**
-- `semantic/models.py` — Python dataclasses:
-  - `DimensionType` enum: `string | number | time | boolean`
-  - `MeasureType` enum: `sum | count | count_distinct | avg | max | min | number`
-  - `Dimension`, `Measure`, `Join`, `Cube`, `SemanticModel` dataclasses
-  - `Measure.to_sql_expression()` — generates `SUM(...)`, `COUNT(...)` etc.
-- `semantic/engine.py` — `SemanticEngine` class:
-  - `load(connection_id)` — reads YAML from disk, parses to dataclasses, in-memory cache
-  - `save(connection_id, model)` — serializes back to YAML, invalidates cache
-  - `exists(connection_id)` — check if model file exists
-  - `build_llm_context(model, relevant_cubes)` — compact string for LLM SQL generation
-  - `_parse_model / _parse_cube / _serialize_model` — YAML ↔ dataclass conversion
-- `agent/tools/semantic_tool.py` — LLM-driven generation:
-  - Phase 1: LLM classifies each column as `dimension | measure | time | skip`
-  - Phase 2: LLM generates clarification questions about business logic
-  - Phase 3: User answers → business rules embedded in YAML measures
-  - Phase 4: Assemble and save YAML model
-  - Uses sample rows to help LLM classify (critical — `amount: [99.99, 149.00]` → clearly a measure)
-- `api/routes/semantic.py`:
-  - `POST /semantic/{connection_id}` — triggers generation (with optional user answers)
-  - `GET /semantic/{connection_id}` — returns existing model
-  - `DELETE /semantic/{connection_id}` — removes model (triggers regeneration)
+- `semantic/models.py` — dataclasses: `DimensionType`, `MeasureType`, `Dimension`, `Measure`, `Join`, `Cube`, `SemanticModel` + `Measure.to_sql_expression()`
+- `semantic/engine.py` — `SemanticEngine`: load/save/exists/build_llm_context, YAML ↔ dataclass conversion
+- `agent/tools/semantic_tool.py` — 4-phase LLM generation: classify columns → clarification questions → user answers → assemble YAML
+- `POST /semantic/{id}`, `GET /semantic/{id}`, `DELETE /semantic/{id}`
 
 **Test result:**
 ```
-POST /semantic/{id} (empty body)       → 5 smart LLM clarification questions  ✅
-POST /semantic/{id} (with rules)       → YAML saved with 3 cubes              ✅
-GET  /semantic/{id}                    → model + LLM context returned          ✅
-revenue measure                        → SUM(CASE WHEN status='completed'...)  ✅
-active_user_count                      → COUNT(CASE WHEN last_login > NOW()-30d)✅
+POST /semantic/{id} (empty body)  → 5 smart LLM clarification questions   ✅
+POST /semantic/{id} (with rules)  → YAML saved with 3 cubes               ✅
+GET  /semantic/{id}               → model + LLM context returned           ✅
+revenue measure                   → SUM(CASE WHEN status='completed'...)   ✅
+active_user_count                 → COUNT(CASE WHEN last_login > NOW()-30d)✅
 ```
 
 **Bugs found and fixed:**
-1. **Python 3.9 `X | None` syntax error** — all files using `dict | None` or `list[str]`
-   syntax got `from __future__ import annotations` added. Pydantic models specifically
-   were changed to use `Optional[dict]` from `typing` since Pydantic evaluates
-   annotations at runtime even with the future import.
-   - Files fixed: `connectors/store.py`, `connectors/postgres.py`, `semantic/models.py`,
-     `agent/tools/schema_tool.py`, `agent/tools/semantic_tool.py`, `api/routes/semantic.py`
+1. **Python 3.9 `X | None` syntax** — added `from __future__ import annotations` + switched Pydantic fields to `Optional[...]` across all new files
+2. **Double-wrapping in `build_llm_context`** — was calling `m.to_sql_expression()` on an already-full expression like `SUM(CASE WHEN ...)`, producing `SUM(SUM(...))`. Fixed to use `m.sql` directly in context display.
 
-2. **Double-wrapping in `build_llm_context`** — `SemanticEngine.build_llm_context()` was
-   calling `m.to_sql_expression()` which wraps `m.sql` in `SUM(...)`. But the LLM already
-   stores full expressions in `m.sql` (e.g. `SUM(CASE WHEN ...)`), causing `SUM(SUM(...))`.
-   - Fix: changed line in `semantic/engine.py` to use `m.sql` directly in context display.
-   - `to_sql_expression()` is still correct for when a raw column name needs wrapping.
+---
+
+### Day 5 — Session persistence + token tracking ✅
+**Files created:** `agent/session.py`, `agent/context.py`, `api/routes/session.py`  
+**Files modified:** `api/main.py`
+
+**What was built:**
+
+`agent/session.py` — `Session` class + module-level store:
+- `add(role, content)` — appends a message to memory and immediately flushes to JSONL file
+- `add_tool_result(tool_name, result)` — records tool events as their own line
+- `to_llm_messages()` — converts session to the `[{role, content}]` format the LLM API expects; system messages are inserted at position 0
+- `replace_messages(new_messages)` — overwrites both memory and the JSONL file (used by compaction)
+- `create_session(connection_id)` — generates UUID, touches the JSONL file immediately so listing works before any messages
+- `get_session(session_id)` — checks in-memory dict first, then reloads from disk (server restart recovery)
+- `list_sessions(connection_id?)` — globs `data/sessions/*.jsonl`
+
+`agent/context.py` — token tracking + compaction:
+- `estimate_tokens(text)` — `len(text) // 4`, no API call needed
+- `session_token_estimate(session)` — sums all message content lengths
+- `needs_compaction(session)` — threshold: 6000 estimated tokens
+- `compact_session(session, llm)` — LLM summarizes old messages, keeps last 6 verbatim, rewrites session file
+- `build_system_prompt(connection_id, semantic_context)` — the system prompt prepended to every LLM call
+
+`api/routes/session.py`:
+- `POST /session` — creates session, returns `session_id`
+- `GET /session/{session_id}` — returns summary + full message list
+- `GET /sessions?connection_id=...` — lists all sessions, optional filter
+
+**Test result:**
+```
+POST /session                → session_id returned, JSONL file created on disk  ✅
+GET  /session/{id}           → summary + messages returned                       ✅
+GET  /sessions               → session appears in list                           ✅
+Disk resume (after restart)  → all messages reloaded correctly from JSONL        ✅
+```
+
+**Bugs found and fixed:**
+1. **Python 3.9 `X | None` syntax** — same issue as Day 4; fixed in `session.py` and `session.py` route with `from __future__ import annotations` + `Optional[...]`
+2. **JSONL file not created on session init** — `add()` opens in append mode so no file exists until the first message. `list_sessions()` globs for `.jsonl` files so fresh sessions were invisible. Fixed by calling `self.path.touch(exist_ok=True)` in `Session.__init__`.
+
+---
+
+### Day 6 — NL → SQL query tool ✅
+**Files created:** `agent/tools/query_tool.py`  
+**Files already in place:** `api/routes/query.py`, `validation/engine.py`  
+**GitHub issues:** [M3-3](https://github.com/YoussefHiveNet/Waggle_PFE/issues/5), [M3-4](https://github.com/YoussefHiveNet/Waggle_PFE/issues/6)
+
+**What was built:**
+
+`agent/tools/query_tool.py` — end-to-end NL → SQL pipeline:
+- `run_query(connection_id, question)` — main entry point; orchestrates the full flow
+- `_resolve_cubes(model, question)` — keyword-matches the question against cube/field names to pick only relevant cubes for the LLM context (avoids bloating prompts on large schemas)
+- Retry loop (up to `MAX_ATTEMPTS = 3`):
+  1. `_generate_sql()` — builds the LLM prompt with semantic context + schema + accumulated error history, calls `generate(prompt, system=...)`
+  2. `sqlglot.parse_one()` — syntax-validates the SQL for free before touching the DB
+  3. `fetch_with_config()` — executes against the DB
+  4. `validate()` — runs the full 5-check validation pipeline
+  5. Returns on pass, or appends the failure to `errors[]` and retries
+- `_serialize_rows()` — converts asyncpg's non-JSON-serializable types (Decimal → float, date/datetime → ISO string, UUID → str) before FastAPI returns them
+
+**Validation pipeline** (`validation/engine.py` — already built, wired in today):
+1. **Structural** — empty result with no aggregation, row explosion (>10k), all-NULL column
+2. **Semantic coherence** — "how many / total / sum" question but no numeric column returned
+3. **Business assertions** — checks YAML assertions from the semantic model (e.g. revenue ≥ 0)
+4. **Cross-query** — LLM writes a simpler COUNT(*) and compares row count (skipped for scalar aggregates to avoid false positives)
+5. **LLM sanity** — shows first 3 rows to LLM and asks if the result makes sense
+
+**Test results:**
+```
+POST /query/{id}  {"question": "what is the total revenue?"}
+→ SQL:  SELECT SUM(CASE WHEN o.status = 'completed' THEN o.amount ELSE 0 END) AS revenue FROM orders o
+→ data: [{"revenue": 1147.99}]
+→ all 5 checks passed, confidence: 0.95, attempts: 1  ✅
+
+POST /query/{id}  {"question": "how many users do we have?"}
+→ SQL:  SELECT COUNT(u.id) AS total_users FROM users u
+→ data: [{"total_users": 3}]
+→ confidence: 0.95, attempts: 1  ✅
+
+POST /query/{id}  {"question": "show me the number of orders per user"}
+→ SQL:  SELECT u.email, COUNT(o.id) AS order_count FROM orders o JOIN users u ON o.user_id = u.id GROUP BY u.email
+→ data: 3 rows, cross-query check passed, confidence: 0.95, attempts: 1  ✅
+```
+
+**Bugs found and fixed:**
+1. **Stale connection_id** — the connection in `data/connections.json` had changed from Day 2; used the current UUID from disk
+2. **`_serialize_rows` missing from stub** — the pre-existing stub returned raw asyncpg rows which FastAPI cannot JSON-encode (Decimal, date, UUID types). Added `_serialize_rows()` to handle all three cases.
 
 ---
 
 ## What's Next — Ordered Priority
 
-### Day 5 (current) — M3: Query tool + Agent harness
-
-### M3 — Agent harness + query tool
-- [ ] `agent/tools/query_tool.py` — NL → SQL with retry loop (3 attempts, accumulating error history)
-- [ ] `agent/runtime.py` — harness loop: assemble context → LLM → tool call → result → repeat
-- [ ] `api/routes/query.py` — `POST /query/{connection_id}` endpoint
-- [ ] Test: "what is the total revenue?" against `waggle_dev`
-
-### M4 — Validation engine
-- [ ] `validation/engine.py` — 5 checks in order:
-  1. Structural (empty result, row explosion, all-null columns, duplicate rows)
-  2. Semantic coherence (question asks "how many" but no integer column returned, etc.)
-  3. Business rule assertions (from semantic model YAML)
-  4. Cross-query verification (LLM writes a simpler check query)
-  5. LLM sanity review (does the result magnitude make sense?)
-- [ ] Wire into query_tool retry loop
+### Day 7 — runtime.py
+- [ ] `agent/runtime.py` — conversation harness: check compaction → build system prompt → append user message → call LLM with full session history → append response → return
+- [ ] Update `POST /query/{connection_id}` to accept optional `session_id` for multi-turn conversations
+- [ ] Test: two-turn conversation referencing prior context
 
 ### M5 — Frontend integration
 - [ ] Connect React frontend to FastAPI backend
-- [ ] Connection form → calls `POST /connect`
-- [ ] Schema viewer
-- [ ] Semantic model display + business Q&A flow
+- [ ] Connection form → `POST /connect`
+- [ ] Schema viewer, semantic model display + business Q&A flow
 - [ ] Query input + result table with confidence badge
 
 ### M6 — BigQuery connector
-- [ ] `connectors/bigquery.py` — implement same interface as postgres.py
+- [ ] `connectors/bigquery.py` — same interface as `postgres.py`
 - [ ] Add `db_type: bigquery` support to `/connect`
 
 ### M7 — Polish
-- [ ] Session persistence (`agent/session.py` — JSONL files)
-- [ ] Token tracking (`agent/context.py`)
 - [ ] Error handling and user-facing error messages
 - [ ] README + demo video
 
@@ -295,20 +344,17 @@ active_user_count                      → COUNT(CASE WHEN last_login > NOW()-30
 ## Environment Setup
 
 ```bash
-# Clone and set up
 python -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-# Create .env (never commit this)
 cp .env.example .env
 # Fill in: LLM_BASE_URL, LLM_API_KEY, LLM_MODEL, PG_* values
 
-# Run
 uvicorn api.main:app --reload
 ```
 
-**Current .env values (structure — fill in real values):**
+**Current .env structure:**
 ```
 LLM_BASE_URL=https://api.groq.com/openai/v1
 LLM_API_KEY=gsk_...
@@ -330,7 +376,6 @@ Zero code changes needed to switch providers — just update `.env`. The client 
 
 **Hivenet GPU rental (paused):**  
 - Instance: 8x RTX 4090, vLLM running Llama 3.3 70B
-- URL format (once fixed): `https://{instance-id}-8800.uae.tenants.hivecompute.ai:4443/v1`
 - Issue: `/v1/models` returns 404 — routing problem on that instance
 - Status: Switched to Groq to unblock development; Hivenet to be retested with a new instance
 
@@ -348,16 +393,14 @@ Before this PFE project, a separate Waggle experiment was built on a VPS with:
 - MCP server for LLM ↔ Cube.js bridge
 - Docker Compose deployment on Hivenet GPU VPS
 
-That project is separate from this codebase. The lessons learned:
+That project is separate from this codebase. Lessons learned:
 - Cube.js 0.31 requires JS schema files (not YAML) for complex cases
-- JWT auth is needed for Cube.js API calls (not a raw "Bearer test" token)
+- JWT auth is needed for Cube.js API calls
 - Docker networking between services requires careful container naming
 
 ---
 
 ## GitHub Issues Template
-
-Use this for every feature/day completed:
 
 ```markdown
 ## [M{n}-{x}]: {Feature name}
@@ -386,436 +429,4 @@ Use this for every feature/day completed:
 
 ---
 
-*Last updated: 2026-04-21 — M2 fully verified on Mac*
-
-
-
-what i changed today : Day 5 — Session persistence + token tracking
-What we're building and why
-Every serious agent system stores conversations. Without persistence, if uvicorn restarts you lose all context. More importantly, the agent needs to know what was said earlier in a conversation to give coherent answers — "show me last month's revenue" only makes sense if the agent remembers you already connected to the orders database.
-We're using JSONL (one JSON object per line) — the same format the leaked Claude Code used and the same format every production LLM system uses. Each line is one event: user message, assistant response, tool call, tool result. Simple, appendable, readable.
-The token tracker sits alongside the session and counts how many tokens are in the current context window. When it gets too large we trigger compaction — summarizing old messages to free space. This is the bug that was draining tokens in the Claude Code leak: bad session management = cache misses = full re-processing every turn.
-New files today
-waggle/
-├── agent/
-│   ├── session.py        ← NEW — JSONL conversation store
-│   └── context.py        ← NEW — token counter + compaction
-└── data/
-    └── sessions/         ← AUTO-CREATED — one .jsonl per session
-
-1 — Create agent/session.py:
-python# agent/session.py
-"""
-Session persistence using JSONL format.
-
-Every conversation turn is appended as a JSON line:
-  {"role": "user",      "content": "...", "ts": 1234567890}
-  {"role": "assistant", "content": "...", "ts": 1234567890}
-  {"role": "tool",      "name": "query_tool", "result": {...}, "ts": ...}
-
-Why JSONL:
-- Appendable without rewriting the whole file
-- Human readable — you can open it in any text editor
-- Streamable — read line by line without loading everything
-- Same format used by Claude Code, OpenAI evals, every prod system
-"""
-import json
-import time
-import uuid
-from pathlib import Path
-from typing import Literal
-
-SESSIONS_DIR = Path("data/sessions")
-
-MessageRole = Literal["user", "assistant", "tool", "system"]
-
-class Session:
-    def __init__(self, session_id: str, connection_id: str):
-        self.session_id    = session_id
-        self.connection_id = connection_id
-        self.path          = SESSIONS_DIR / f"{session_id}.jsonl"
-        self._messages: list[dict] = []
-        SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-
-    # ── WRITE ──────────────────────────────────────────────────────────
-
-    def add(self, role: MessageRole, content: str, **extra) -> dict:
-        """Append one message to the session."""
-        msg = {
-            "role":          role,
-            "content":       content,
-            "ts":            int(time.time()),
-            "connection_id": self.connection_id,
-            **extra
-        }
-        self._messages.append(msg)
-        # Append to JSONL file immediately — never lose a message
-        with self.path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(msg) + "\n")
-        return msg
-
-    def add_tool_result(self, tool_name: str, result: dict) -> dict:
-        """Record a tool call result as its own event."""
-        return self.add(
-            role="tool",
-            content=f"Tool {tool_name} executed",
-            tool_name=tool_name,
-            result=result
-        )
-
-    # ── READ ───────────────────────────────────────────────────────────
-
-    def messages(self) -> list[dict]:
-        """Return all messages in memory."""
-        return self._messages.copy()
-
-    def to_llm_messages(self) -> list[dict]:
-        """
-        Convert session to the format the LLM API expects.
-        Tool results are folded into assistant context.
-        Skips tool events — those are internal records.
-        """
-        llm_msgs = []
-        for msg in self._messages:
-            if msg["role"] in ("user", "assistant"):
-                llm_msgs.append({
-                    "role":    msg["role"],
-                    "content": msg["content"]
-                })
-            elif msg["role"] == "system":
-                llm_msgs.insert(0, {
-                    "role":    "system",
-                    "content": msg["content"]
-                })
-        return llm_msgs
-
-    def last_n(self, n: int) -> list[dict]:
-        """Return last N messages — used by context compaction."""
-        return self._messages[-n:]
-
-    def message_count(self) -> int:
-        return len(self._messages)
-
-    def replace_messages(self, new_messages: list[dict]):
-        """
-        Replace in-memory messages with compacted version.
-        Rewrites the JSONL file to match.
-        Used by context compaction.
-        """
-        self._messages = new_messages
-        with self.path.open("w", encoding="utf-8") as f:
-            for msg in new_messages:
-                f.write(json.dumps(msg) + "\n")
-
-    # ── SUMMARY ────────────────────────────────────────────────────────
-
-    def summary(self) -> dict:
-        return {
-            "session_id":    self.session_id,
-            "connection_id": self.connection_id,
-            "message_count": len(self._messages),
-            "path":          str(self.path)
-        }
-
-
-# ── SESSION STORE ──────────────────────────────────────────────────────────
-
-_sessions: dict[str, Session] = {}
-
-def create_session(connection_id: str) -> Session:
-    """Create a new session and register it."""
-    session_id = str(uuid.uuid4())
-    session    = Session(session_id, connection_id)
-    _sessions[session_id] = session
-    return session
-
-def get_session(session_id: str) -> Session | None:
-    """Get session from memory or reload from disk."""
-    if session_id in _sessions:
-        return _sessions[session_id]
-    # Try loading from disk (server restart recovery)
-    path = SESSIONS_DIR / f"{session_id}.jsonl"
-    if not path.exists():
-        return None
-    session = _resume_from_disk(session_id, path)
-    _sessions[session_id] = session
-    return session
-
-def _resume_from_disk(session_id: str, path: Path) -> Session:
-    """
-    Reload a session from its JSONL file.
-    This is the resume functionality — exactly what was broken
-    in the Claude Code leak (db8 bug stripped tool records).
-    We preserve ALL record types so resume works correctly.
-    """
-    messages = []
-    connection_id = ""
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                msg = json.loads(line)
-                messages.append(msg)
-                if not connection_id and "connection_id" in msg:
-                    connection_id = msg["connection_id"]
-            except json.JSONDecodeError:
-                continue  # skip corrupted lines
-
-    session = Session(session_id, connection_id)
-    session._messages = messages
-    return session
-
-def list_sessions(connection_id: str | None = None) -> list[dict]:
-    """List all sessions, optionally filtered by connection."""
-    result = []
-    for path in SESSIONS_DIR.glob("*.jsonl"):
-        session_id = path.stem
-        s = get_session(session_id)
-        if s:
-            if connection_id is None or s.connection_id == connection_id:
-                result.append(s.summary())
-    return result
-
-2 — Create agent/context.py:
-python# agent/context.py
-"""
-Token tracking and context compaction.
-
-Why this matters:
-- LLMs have a context window limit (Llama 3.3 70B = 128k tokens)
-- Groq free tier has per-request token limits
-- Long sessions accumulate tokens fast
-- When context is too big: costs explode, responses degrade
-
-Our strategy:
-1. Estimate tokens cheaply (no API call needed)
-2. When threshold reached, ask LLM to summarize old messages
-3. Replace old messages with summary + keep last N messages intact
-4. Session file is rewritten to reflect compaction
-
-This is the fix for the exact bug described in the Claude Code leak.
-"""
-from agent.session import Session
-
-# ── CONSTANTS ─────────────────────────────────────────────────────────────
-
-# Rough estimate: 1 token ≈ 4 characters (standard approximation)
-CHARS_PER_TOKEN   = 4
-
-# Trigger compaction when estimated tokens exceed this
-COMPACTION_THRESHOLD = 6000   # conservative for Groq free tier
-
-# Always keep last N messages verbatim after compaction
-# (so the LLM has immediate context)
-KEEP_RECENT = 6
-
-# ── TOKEN ESTIMATION ──────────────────────────────────────────────────────
-
-def estimate_tokens(text: str) -> int:
-    """
-    Fast token estimation without an API call.
-    Accurate enough for threshold decisions.
-    Real tokenizers vary but 4 chars/token is a safe average.
-    """
-    return len(text) // CHARS_PER_TOKEN
-
-def session_token_estimate(session: Session) -> int:
-    """Estimate total tokens in a session's message history."""
-    total_chars = sum(
-        len(msg.get("content", "")) + len(str(msg.get("result", "")))
-        for msg in session.messages()
-    )
-    return total_chars // CHARS_PER_TOKEN
-
-def needs_compaction(session: Session) -> bool:
-    """Return True if session is approaching token limit."""
-    return session_token_estimate(session) > COMPACTION_THRESHOLD
-
-# ── COMPACTION ────────────────────────────────────────────────────────────
-
-COMPACTION_PROMPT = """
-Summarize the following conversation history concisely.
-Preserve:
-- What database/tables were discussed
-- What queries were run and what they returned
-- Any business rules or definitions that were established
-- Any errors that occurred and how they were resolved
-
-Be brief but complete. This summary replaces the original messages.
-
-CONVERSATION:
-{history}
-"""
-
-async def compact_session(session: Session, llm) -> dict:
-    """
-    Summarize old messages, keep recent ones, rewrite session.
-    Returns a report of what was done.
-    """
-    messages = session.messages()
-
-    if len(messages) <= KEEP_RECENT:
-        return {"compacted": False, "reason": "too few messages"}
-
-    # Split: old messages get summarized, recent ones are kept verbatim
-    old_messages    = messages[:-KEEP_RECENT]
-    recent_messages = messages[-KEEP_RECENT:]
-
-    # Build history text for LLM
-    history_text = "\n".join([
-        f"{m['role'].upper()}: {m.get('content', str(m.get('result', '')))}"
-        for m in old_messages
-    ])
-
-    # Ask LLM to summarize
-    summary_text = await llm(
-        COMPACTION_PROMPT.format(history=history_text)
-    )
-
-    # Build compacted message list
-    summary_msg = {
-        "role":          "system",
-        "content":       f"[CONVERSATION SUMMARY]\n{summary_text}",
-        "ts":            int(__import__('time').time()),
-        "connection_id": session.connection_id,
-        "compacted":     True,
-        "replaced_count": len(old_messages)
-    }
-
-    new_messages = [summary_msg] + recent_messages
-
-    # Rewrite session
-    session.replace_messages(new_messages)
-
-    return {
-        "compacted":      True,
-        "removed":        len(old_messages),
-        "kept_recent":    KEEP_RECENT,
-        "summary_tokens": estimate_tokens(summary_text)
-    }
-
-# ── CONTEXT BUILDER ───────────────────────────────────────────────────────
-
-def build_system_prompt(connection_id: str, semantic_context: str) -> str:
-    """
-    The system prompt injected at the start of every LLM call.
-    Kept short deliberately — every token here costs on every turn.
-    """
-    return f"""You are Waggle, an AI data analyst.
-You have access to a database (connection: {connection_id}).
-
-{semantic_context}
-
-Rules:
-- Always generate valid PostgreSQL SQL
-- Use the semantic model definitions above for metrics
-- If unsure, ask a clarifying question rather than guessing
-- Return results as structured data, not prose
-"""
-
-3 — Add session routes to api/routes/session.py:
-python# api/routes/session.py
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from agent.session import create_session, get_session, list_sessions
-
-router = APIRouter()
-
-class CreateSessionRequest(BaseModel):
-    connection_id: str
-
-@router.post("/session")
-async def new_session(body: CreateSessionRequest):
-    """Create a new conversation session for a connection."""
-    session = create_session(body.connection_id)
-    return session.summary()
-
-@router.get("/session/{session_id}")
-async def get_session_info(session_id: str):
-    """Get session info and full message history."""
-    session = get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return {
-        **session.summary(),
-        "messages": session.messages()
-    }
-
-@router.get("/sessions")
-async def sessions(connection_id: str | None = None):
-    """List all sessions, optionally filtered by connection."""
-    return {"sessions": list_sessions(connection_id)}
-
-4 — Update api/main.py:
-python# api/main.py
-from fastapi import FastAPI
-from agent.llm import ping as llm_ping
-from connectors.postgres import ping as db_ping
-from api.routes.connect  import router as connect_router
-from api.routes.schema   import router as schema_router
-from api.routes.semantic import router as semantic_router
-from api.routes.session  import router as session_router
-
-app = FastAPI(title="Waggle API", version="0.1.0")
-
-app.include_router(connect_router)
-app.include_router(schema_router)
-app.include_router(semantic_router)
-app.include_router(session_router)
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
-
-@app.get("/ping-llm")
-async def ping_llm():
-    try:
-        response = await llm_ping()
-        return {"status": "ok", "response": response}
-    except Exception as e:
-        return {"status": "error", "detail": str(e)}
-
-@app.get("/ping-db")
-async def ping_db():
-    try:
-        response = await db_ping()
-        return {"status": "ok", "response": response}
-    except Exception as e:
-        return {"status": "error", "detail": str(e)}
-
-5 — Test sequence, run in order:
-bash# 1. Create a session
-curl -X POST http://127.0.0.1:8000/session \
-  -H "Content-Type: application/json" \
-  -d '{"connection_id": "31a052b8-e5ac-4c0a-b71a-be13bdbeb4dc"}'
-
-# 2. Check it exists (use session_id from step 1)
-curl http://127.0.0.1:8000/session/YOUR_SESSION_ID
-
-# 3. List all sessions
-curl http://127.0.0.1:8000/sessions
-
-# 4. Verify the JSONL file was created on disk
-# On Windows Git Bash:
-ls data/sessions/
-cat data/sessions/YOUR_SESSION_ID.jsonl
-After step 1 you'll get back a session_id. Save it — every query in Day 6 and 7 will use it alongside the connection_id.
-
-
-
-
-M1 — Scaffolding + DB connection        ✅ DONE  (Days 1–2)
-M2 — Schema extraction + Semantic YAML ✅ DONE  (Days 3–4)
-M3 — Agent harness + query tool
-     Day 5: Session + context           ⬜ TODAY
-     Day 6: query_tool.py               ⬜
-     Day 7: runtime.py + /query         ⬜
-M4 — Validation engine                  ⬜       (Days 8–9)
-M5 — Frontend integration               ⬜       (Days 10–12)
-M6 — BigQuery connector                 ⬜       (Days 13–14)
-M7 — Polish + demo prep                 ⬜       (Days 15–16)
-─────────────────────────────────────────────────────────────
-Days completed:  4 / 16
-Days remaining: 12 / 16
+*Last updated: 2026-04-22 — Day 6 done: NL → SQL query tool + validation pipeline wired*

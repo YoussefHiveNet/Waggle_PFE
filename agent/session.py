@@ -13,11 +13,13 @@ Why JSONL:
 - Streamable — read line by line without loading everything
 - Same format used by Claude Code, OpenAI evals, every prod system
 """
+from __future__ import annotations
+
 import json
 import time
 import uuid
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 SESSIONS_DIR = Path("data/sessions")
 
@@ -30,6 +32,7 @@ class Session:
         self.path          = SESSIONS_DIR / f"{session_id}.jsonl"
         self._messages: list[dict] = []
         SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        self.path.touch(exist_ok=True)
 
     # ── WRITE ──────────────────────────────────────────────────────────
 
@@ -123,7 +126,7 @@ def create_session(connection_id: str) -> Session:
     _sessions[session_id] = session
     return session
 
-def get_session(session_id: str) -> Session | None:
+def get_session(session_id: str) -> Optional[Session]:
     """Get session from memory or reload from disk."""
     if session_id in _sessions:
         return _sessions[session_id]
@@ -161,7 +164,7 @@ def _resume_from_disk(session_id: str, path: Path) -> Session:
     session._messages = messages
     return session
 
-def list_sessions(connection_id: str | None = None) -> list[dict]:
+def list_sessions(connection_id: Optional[str] = None) -> list[dict]:
     """List all sessions, optionally filtered by connection."""
     result = []
     for path in SESSIONS_DIR.glob("*.jsonl"):
