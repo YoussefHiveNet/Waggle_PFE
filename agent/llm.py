@@ -1,6 +1,6 @@
-# agent/llm.py
 from __future__ import annotations
 import httpx
+from typing import Optional
 from openai import AsyncOpenAI
 from config import LLMConfig
 
@@ -19,7 +19,7 @@ def get_client() -> AsyncOpenAI:
 async def generate(
     prompt: str,
     system: str = "",
-    messages: list[dict] | None = None
+    messages: Optional[list[dict]] = None
 ) -> str:
     """
     Call the LLM.

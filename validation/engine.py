@@ -201,9 +201,18 @@ async def _check_llm_sanity(
         sample = data[:3]
         prompt = (
             f"Question: {question}\n"
-            f"Result (first {len(sample)} rows): "
+            f"SQL result (first {len(sample)} rows): "
             f"{json.dumps(sample, default=str)}\n\n"
-            "Does this result make sense for the question? Reply YES or NO only."
+            "Is this result reasonable for the question asked?\n\n"
+            "Only answer NO if there is a clear data problem such as:\n"
+            "- A revenue or count value is negative when it should not be\n"
+            "- A numeric result is impossibly large for the context\n"
+            "- The columns returned are completely unrelated to the question\n\n"
+            "Do NOT answer NO just because:\n"
+            "- The grouping dimension differs from what you expected\n"
+            "- Some rows have zero values (zero is valid data)\n"
+            "- There are more or fewer columns than you might expect\n\n"
+            "Answer YES or NO, then one sentence of reasoning."
         )
         answer = (await generate(prompt)).strip().upper()
         if answer.startswith("NO"):

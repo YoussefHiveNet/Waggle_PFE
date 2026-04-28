@@ -6,4 +6,10 @@ asyncpg==0.29.0
 pyyaml==6.0.1
 sqlglot==25.0.0
 pydantic==2.8.0
+pydantic[email]==2.8.0
 httpx==0.27.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+python-jose[cryptography]==3.5.0
+duckdb==1.4.4
+python-multipart==0.0.20

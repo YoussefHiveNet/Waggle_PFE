@@ -26,26 +26,36 @@ An AI-powered **semantic data modeling platform** — a PFE (end-of-studies caps
 ```
 waggle/
 ├── api/                         # FastAPI REST layer
-│   ├── main.py                  # App entrypoint, route wiring
+│   ├── main.py                  # App entrypoint, CORS, lifespan (DB init)
 │   └── routes/
+│       ├── auth.py              # POST /auth/register|login|refresh|logout, GET /auth/me
+│       ├── artifacts.py         # POST/GET/PUT/DELETE /artifacts
+│       ├── sources.py           # POST /sources/upload  (CSV/Parquet)
 │       ├── connect.py           # POST /connect, GET /connect/{id}
 │       ├── schema.py            # GET /schema/{id}, /schema/{id}/llm-context
 │       ├── semantic.py          # POST/GET/DELETE /semantic/{id}
 │       ├── session.py           # POST /session, GET /session/{id}, GET /sessions
-│       └── query.py             # POST /query/{id}  ← not yet wired
+│       └── query.py             # POST /query/{id}
+│
+├── auth/
+│   ├── __init__.py
+│   ├── password.py              # bcrypt hash/verify via passlib
+│   ├── jwt.py                   # JWT issue/decode + FastAPI dependency get_current_user
+│   └── db.py                    # waggle_app schema: users, refresh_tokens, artifacts tables
 │
 ├── agent/
 │   ├── llm.py                   # OpenAI-compat client (Groq / Hivenet)
 │   ├── session.py               # JSONL persistence — one file per session
 │   ├── context.py               # Token estimation + compaction
-│   ├── runtime.py               # Harness loop  ← not yet built
+│   ├── runtime.py               # Two-call agent harness
 │   └── tools/
 │       ├── schema_tool.py       # Schema extraction + LLM formatting
 │       ├── semantic_tool.py     # LLM generates YAML from schema
-│       └── query_tool.py        # NL → SQL → validate  ← not yet built
+│       └── query_tool.py        # NL → SQL → validate
 │
 ├── connectors/
 │   ├── postgres.py              # asyncpg: connect, fetch, extract_schema
+│   ├── duckdb.py                # DuckDB: CSV/Parquet query + schema extraction
 │   ├── store.py                 # JSON-backed connection registry
 │   └── bigquery.py              # Placeholder — not yet built
 │
@@ -55,14 +65,15 @@ waggle/
 │   └── models/                  # Stored .yaml files per connection_id
 │
 ├── validation/
-│   └── engine.py                # 5-check validation pipeline  ← not yet built
+│   └── engine.py                # 5-check validation pipeline
 │
 ├── data/
 │   ├── connections.json         # Auto-generated connection store
 │   ├── schemas/                 # Cached extracted schemas per connection_id
-│   └── sessions/                # One .jsonl file per session
+│   ├── sessions/                # One .jsonl file per session
+│   └── uploads/                 # Uploaded files: {user_id}/{file_id}.csv
 │
-├── config.py                    # LLMConfig + DBConfig from .env
+├── config.py                    # LLMConfig + DBConfig + AuthConfig + UploadConfig
 ├── requirements.txt
 └── .env                         # Never commit — in .gitignore
 ```
@@ -78,11 +89,14 @@ waggle/
 | LLM Model | `llama-3.3-70b-versatile` (Groq) | Best SQL/JSON quality available for free |
 | DB (local) | PostgreSQL 18 | Standard, asyncpg pool support |
 | DB (cloud) | BigQuery | Free 1TB/month, internship access |
+| File queries | DuckDB (embedded) | Zero-setup analytical SQL on CSV/Parquet; fully isolated per user |
+| Auth | JWT (python-jose) + bcrypt (passlib) | Stateless access tokens, opaque refresh tokens in httpOnly cookie |
 | Semantic layer | Custom YAML engine | Budget reasons + capstone learning value |
 | SQL parsing | sqlglot | Free, pure Python, multi-dialect |
 | Session format | JSONL | Appendable, human-readable, same format as Claude Code / OpenAI evals |
 | Session tracking | GitHub Issues + Milestones | Doubles as capstone journal |
-| Frontend | React + TypeScript | Already built, pre-exists |
+| Frontend | React + TypeScript + shadcn/ui | Vite, Tailwind, Recharts — to be built Day 10+ |
+| Hosting | Hivenet bare metal | Free, full control, no vendor limits |
 
 **LLM temperature: always 0.1** for SQL/YAML generation — determinism over creativity.
 
@@ -142,9 +156,10 @@ waggle/
 |---|---|---|
 | **M1** | Scaffolding + DB connection | ✅ Done |
 | **M2** | Schema extraction + Semantic YAML | ✅ Done |
-| **M3** | Agent harness + query tool | 🔄 In Progress (Day 7 left) |
+| **M3** | Agent harness + query tool | ✅ Done |
 | **M4** | Validation engine | ✅ Done (built alongside Day 6) |
-| **M5** | React frontend integration | ⬜ Not started |
+| **M5** | React frontend + Auth UI | 🔄 Day 10 next |
+| **M5b** | Auth backend (JWT + users + artifacts + DuckDB) | ✅ Done (Day 9) |
 | **M6** | BigQuery connector | ⬜ Not started |
 | **M7** | Polish, testing, demo | ⬜ Not started |
 
@@ -318,18 +333,175 @@ POST /query/{id}  {"question": "show me the number of orders per user"}
 
 ---
 
+### Day 7 — Agent harness (runtime.py) ✅
+**Files created:** `agent/runtime.py`  
+**Files modified:** `agent/llm.py`, `api/routes/query.py`  
+**GitHub issue:** [M3-5](https://github.com/YoussefHiveNet/Waggle_PFE/issues/7)
+
+**What was built:**
+
+`agent/runtime.py` — the central conversation harness:
+- Tool registry: `query` (NL → SQL) and `get_schema` (schema listing)
+- `_tool_descriptions()` — formats tool list for the system prompt so the LLM knows how to call them
+- `_parse_tool_call(text)` — detects whether the LLM responded with a JSON tool call or plain text
+- `_execute_tool(name, params, connection_id)` — dispatches to `run_query` or `get_schema`
+- `_clean_history(session)` — strips internal bookkeeping entries (`role=tool`, `[Tool result]` messages, `[Calling tool]` messages) from the session before building the LLM message list
+- `_summarize_tool_result(name, result)` — concise summary (SQL + row count + first 5 rows) to feed into the synthesis call
+- `run_turn(session, user_message)` — the main entry point (see design decisions below)
+- `get_or_create_session(connection_id, session_id)` — helper exported for routes
+
+`agent/llm.py` — extended `generate()` to accept an optional `messages` list for multi-turn calls. When `messages` is provided, the full history is sent; otherwise falls back to single-turn mode with just `prompt` + `system`.
+
+`api/routes/query.py` — updated to:
+- Accept `session_id: Optional[str]` in the request body
+- Delegate to `run_turn(session, question)` instead of calling `run_query` directly
+- Create a new session if no `session_id` is provided
+
+**Key design decision — two-call pattern (not a loop):**
+
+Every turn makes exactly 1 or 2 LLM calls:
+- **Call 1:** LLM sees full conversation history + tool descriptions → responds with either a JSON tool call or a plain-text answer
+- **Call 2:** (only if a tool was called) LLM sees the tool result → writes the final plain-language answer; tool descriptions are NOT in the system prompt for this call, so it physically cannot loop back
+
+This replaces the original while-loop design which caused the tool loop bug (see Day 8 below).
+
+**Bugs discovered during Day 7 testing:**
+1. **Tool loop (critical)** — the while-loop harness called the tool 5 times per question, always hitting MAX_TOOL_ITERATIONS and returning a generic fallback message. Root cause: `generate(prompt, system)` was only passing the last message content as a string, not the full history. The injected `[Tool result]` user message looked like a new data request.
+2. **LLM sanity false positive** — revenue-by-user result (valid data) was flagged by the sanity check because "Reply YES or NO only" gave the LLM no guidance on what constitutes a real problem.
+
+---
+
+### Day 8 — Runtime bug fixes ✅
+**Files modified:** `agent/runtime.py`, `validation/engine.py`  
+**GitHub issue:** [M3-5](https://github.com/YoussefHiveNet/Waggle_PFE/issues/7)
+
+**What was fixed:**
+
+**Bug 1 — Tool loop (critical):** Replaced the while-loop harness with the deterministic two-call pattern described above. Added `_clean_history()` which strips `role=tool` records and `[Tool result]` injected messages from the session before the LLM call. These bookkeeping entries were what caused the LLM to interpret tool results as new user requests.
+
+**Bug 2 — LLM sanity false positives:** Rewrote the `_check_llm_sanity` prompt in `validation/engine.py` to explicitly tell the LLM what NOT to flag: valid groupings, zero-value rows, fewer columns than expected. The new prompt says "Only answer NO if there is a clear data problem" (negative revenue, impossibly large counts, completely unrelated columns). Same YES/NO parsing, far fewer false positives.
+
+**Cleanup:** Removed unused `params` variable from `_tool_descriptions()` in `runtime.py`.
+
+**Test results:**
+```
+POST /query/{id}  {"question": "What is the total revenue?"}
+→ tool_calls: 1 (query)
+→ response: "The total revenue is $1147.99. This is the total amount earned from completed orders."
+→ confidence: 0.95, attempts: 1  ✅
+
+POST /query/{id}  {"question": "Now break that down by user", session_id: ...}
+→ tool_calls: 1 (query — resolved "that" to revenue from prior context)
+→ response: "Alice $148.99 · Carol $999.00 · Bob $0.00. Carol is the largest contributor."
+→ confidence: 0.95, all 5 checks passed (sanity no longer false-positive)  ✅
+
+POST /query/{id}  {"question": "What tables do we have?", session_id: ...}
+→ tool_calls: 1 (get_schema)
+→ response: "We have 3 tables: orders, products, and users."  ✅
+
+Session message count: 12 for 3 questions (was 51 before the fix)  ✅
+```
+
+---
+
+### Day 9 — Auth + Artifacts API + DuckDB connector ✅
+**Files created:** `auth/password.py`, `auth/jwt.py`, `auth/db.py`, `api/routes/auth.py`, `api/routes/artifacts.py`, `api/routes/sources.py`, `connectors/duckdb.py`  
+**Files modified:** `api/main.py`, `config.py`, `requirements.txt`
+
+**What was built:**
+
+`auth/` module:
+- `password.py` — bcrypt hash/verify via passlib
+- `jwt.py` — HS256 JWT (15-min access token) + opaque refresh token (UUID, 7-day TTL). `get_current_user` FastAPI dependency extracts `user_id` from Bearer header. Token rotation on every refresh call.
+- `db.py` — `waggle_app` Postgres schema (separate from user data). Tables: `users`, `refresh_tokens`, `artifacts`. `init_db()` called on FastAPI startup via `lifespan`. All CRUD helpers live here.
+
+`api/routes/auth.py` — 5 endpoints:
+- `POST /auth/register` — bcrypt hash, store user, issue access + refresh tokens. Refresh token in httpOnly cookie (path=`/auth/refresh` to limit exposure).
+- `POST /auth/login` — verify password, same token flow
+- `POST /auth/refresh` — validates cookie, rotates refresh token, returns new access token
+- `POST /auth/logout` — deletes refresh token server-side, clears cookie
+- `GET /auth/me` — returns `{id, email, created_at}` from Bearer token
+
+`api/routes/artifacts.py` — full CRUD behind JWT:
+- `POST /artifacts` — save query + type + style + schedule
+- `GET /artifacts` — list user's artifacts
+- `GET /artifacts/{id}` — single artifact
+- `PUT /artifacts/{id}` — patch any field (name, sql, artifact_type, style_config, refresh_schedule)
+- `DELETE /artifacts/{id}` — remove
+
+`connectors/duckdb.py` — CSV/Parquet connector with the same interface as `postgres.py`:
+- `extract_schema_from_file(path, display_name)` — returns schema dict compatible with `format_for_llm()` and the query tool
+- `fetch_from_file(path, sql)` — runs DuckDB SQL against the file, returns list of dicts
+- `fetch_with_config(config, sql)` — async wrapper matching `postgres.fetch_with_config` so validation engine + query tool work unchanged
+- `get_upload_path(user_id, file_id, filename)` — stable path under `data/uploads/`
+- `validate_file_type(filename)` — allows `.csv`, `.tsv`, `.parquet`, `.json`
+
+`api/routes/sources.py` — `POST /sources/upload`:
+- Accepts multipart file upload (max 100 MB)
+- Writes to `data/uploads/{user_id}/{file_id}.ext`
+- Calls `extract_schema_from_file` to confirm readability before saving
+- Registers a synthetic connection in `connectors/store.py` with `db_type: duckdb`
+- Returns `{connection_id, table_name, row_count, column_count, columns}` — ready to use with `/query/{connection_id}`
+
+`api/main.py` — added:
+- `lifespan` context manager calling `init_db()` on startup
+- CORS middleware (`allow_origins: localhost:5173 + 3000`, `allow_credentials: True` for cookies)
+- All new routers registered
+
+**Key design decisions:**
+- **Separate `waggle_app` schema** in the same Postgres: user data never pollutes the connected databases users bring in. Swap to a separate DB instance with one env var change.
+- **Refresh token in httpOnly cookie with `path=/auth/refresh`**: the cookie is only sent to that one endpoint, limiting CSRF exposure. `secure=False` for localhost; flip to `True` in production.
+- **DuckDB in-process**: no server, no network, zero setup. Each query spins up a fresh `:memory:` connection — fully thread-safe with no shared state.
+- **`display_name` on DuckDB schema**: LLM sees the original filename stem (`test_sales`) as the table name, not the UUID stored on disk.
+- **`bcrypt==4.0.1` pinned**: passlib 1.7.4 reads `bcrypt.__about__.__version__` which was removed in bcrypt 4.1+. Pinning 4.0.1 is the standard workaround until passlib ships a fix.
+
+**Test results:**
+```
+POST /auth/register  {"email":"youssef@waggle.dev","password":"waggle123"}
+→ {"access_token": "eyJ...", "token_type": "bearer"}  ✅  (refresh cookie set)
+
+POST /auth/register  (same email again)
+→ {"detail": "Email already registered"}  409 ✅
+
+POST /auth/login
+→ access token returned, token rotated  ✅
+
+GET /auth/me  (Bearer token)
+→ {"id":"55ebb4b1...","email":"youssef@waggle.dev","created_at":"2026-04-28T..."}  ✅
+
+POST /artifacts  (Bearer token)
+→ artifact saved with id, timestamps  ✅
+
+GET /artifacts
+→ [{"id":"12ed4750...","name":"Total Revenue","artifact_type":"metric",...}]  ✅
+
+PUT /artifacts/{id}  {"name":"Total Revenue (updated)","style_config":{"color":"#C4500A","font_size":32}}
+→ updated_at changed, name + style updated  ✅
+
+POST /sources/upload  test_sales.csv (4 rows, 4 cols)
+→ {"connection_id":"e020e715...","table_name":"test_sales","row_count":4,"column_count":4,
+   "columns":["date","product","revenue","units"]}  ✅
+```
+
+---
+
 ## What's Next — Ordered Priority
 
-### Day 7 — runtime.py
-- [ ] `agent/runtime.py` — conversation harness: check compaction → build system prompt → append user message → call LLM with full session history → append response → return
-- [ ] Update `POST /query/{connection_id}` to accept optional `session_id` for multi-turn conversations
-- [ ] Test: two-turn conversation referencing prior context
+### Day 10 — React frontend scaffold
+- [ ] Vite + React 18 + TypeScript + shadcn/ui + Tailwind
+- [ ] Hivenet color tokens (`#E8610A` orange primary)
+- [ ] React Router v6 routes wired
+- [ ] TanStack Query + Zustand installed
+- [ ] Landing page + Auth pages (login/register)
 
-### M5 — Frontend integration
-- [ ] Connect React frontend to FastAPI backend
-- [ ] Connection form → `POST /connect`
-- [ ] Schema viewer, semantic model display + business Q&A flow
-- [ ] Query input + result table with confidence badge
+### Day 11 — Dashboard + Chat UI
+- [ ] Dashboard: artifact grid, source sidebar
+- [ ] Chat: split-pane conversation + artifact panel
+- [ ] All artifact renderers: metric, table, bar, line, area, pie, scatter, progress
+
+### Day 12 — Artifact editor + onboarding flow
+- [ ] Gear icon → Sheet with Query / Style / Schedule tabs
+- [ ] Onboarding: Connect DB → LLM Q&A → Model ready
 
 ### M6 — BigQuery connector
 - [ ] `connectors/bigquery.py` — same interface as `postgres.py`
@@ -429,4 +601,4 @@ That project is separate from this codebase. Lessons learned:
 
 ---
 
-*Last updated: 2026-04-22 — Day 6 done: NL → SQL query tool + validation pipeline wired*
+*Last updated: 2026-04-28 — Day 9 done: JWT auth, artifacts API, DuckDB CSV connector. Frontend starts Day 10.*

@@ -1,5 +1,6 @@
 # api/routes/query.py
 from __future__ import annotations
+from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from agent.runtime import run_turn
@@ -9,7 +10,7 @@ router = APIRouter()
 
 class QueryRequest(BaseModel):
     question:   str
-    session_id: str | None = None  # optional — creates new session if absent
+    session_id: Optional[str] = None  # optional — creates new session if absent
 
 @router.post("/query/{connection_id}")
 async def query(connection_id: str, body: QueryRequest):
