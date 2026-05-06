@@ -4,6 +4,7 @@ __pycache__/
 *.pyo
 backend/venv/
 backend/.env
+data/
 backend/data/
 
 # ── Backend dev artifacts ─────────────────────────────────────────────────────

@@ -624,7 +624,36 @@ Ownership checks (second user / no auth):
 - `connectors/bigquery.py` still empty (M6).
 - Old `data/connections.json` file on disk is now unread; can be deleted.
 - `semantic/validator.py` empty file still there.
-- The directory is not a git repo locally; recommend `git init` before Day 12 so we get real diffs.
+- File-system paths in `config.UploadConfig.upload_dir` and the schema/session caches are relative — they resolve against cwd at runtime. If uvicorn is started with `--app-dir backend` from the repo root, cwd becomes the repo root and a stray `data/` dir gets written there. Anchor all data paths to `Path(__file__).parent` in Day 12 polish (tracked as a GitHub issue).
+
+---
+
+### Day 11.5 — Monorepo restructure + Tailwind v4 fix ✅
+
+**Repository restructure (post-Day-11):** the git repo originally lived at `Waggle_PFE/Waggle_PFE/` (backend only) with the frontend tree sitting outside the repo entirely. Restructured to a clean monorepo:
+
+```
+/Users/youssef/Developer/Waggle_PFE/   ← .git lives here now
+├── .gitignore         (consolidated, frontend + backend rules)
+├── CLAUDE.md          (canonical at root)
+├── backend/           (renamed from Waggle_PFE/, 41 tracked files)
+└── frontend/          (newly tracked, 72 tracked files)
+```
+
+Two-commit sequence — **`9da5f7d` Day 11 backend** then **`2219134` restructure: monorepo with backend/ + frontend/**. All 41 backend files recorded as renames, so blame and history survive the move. After the rename, the backend `venv/` had hardcoded shebangs pointing to the pre-rename path; recreated with `python3 -m venv` and `pip install -r requirements.txt`. The venv is gitignored anyway.
+
+**Tailwind v4 fix:** the frontend was rendering as raw text — `globals.css` had `@import "tailwindcss"` but Vite had no plugin to resolve it into actual utility classes. Tailwind v4's CSS-first model requires the `@tailwindcss/vite` plugin. Installed, added to `vite.config.ts`:
+
+```ts
+import tailwindcss from "@tailwindcss/vite";
+plugins: [react(), tailwindcss()],
+```
+
+After restart, `globals.css?direct` went from <100B inert text to 45KB of generated utilities. Dashboard / chat / artifacts all render with the Hivenet orange theme as intended. This is a known v3→v4 migration gotcha — v3 only needed `tailwindcss` in PostCSS; v4 requires the explicit Vite plugin.
+
+**Demo dataset:** seeded a `waggle_demo` Postgres database with a 5-table e-commerce schema (categories → products, customers → orders → order_items) and ~3,750 rows for testing the Connect-Postgres flow in the UI. Seed script lives at `/tmp/waggle_demo_seed.sql`; should be promoted into `backend/scripts/seed_demo.sql` in Day 12 so it ships with the repo.
+
+---
 
 ---
 
@@ -732,4 +761,4 @@ That project is separate from this codebase. Lessons learned:
 
 ---
 
-*Last updated: 2026-05-06 — Day 11 done: sources promoted to user-owned first-class entity (Postgres-backed, ownership enforced everywhere), full dashboard (sidebar + grid + AddSource dialog), full chat (split-pane + 8 artifact renderers + save flow), DuckDB table-name bug fixed. Day 12 next: artifact editor sheet + onboarding flow.*
+*Last updated: 2026-05-06 — Day 11 done + monorepo restructure + Tailwind v4 plugin fix. Sources promoted to user-owned first-class entity (Postgres-backed, ownership enforced everywhere), full dashboard, full chat with 8 artifact renderers, DuckDB table-name bug fixed. Repo is now a single-root monorepo with `backend/` and `frontend/` siblings. Frontend styling now actually applies (was rendering as raw text before — needed `@tailwindcss/vite` plugin). Demo Postgres `waggle_demo` seeded. Day 12 next: artifact editor sheet + onboarding flow.*
