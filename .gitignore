@@ -1,6 +1,32 @@
-.env
-venv/
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
-data/
+*.pyc
+*.pyo
+backend/venv/
+backend/.env
+backend/data/
+
+# ── Backend dev artifacts ─────────────────────────────────────────────────────
+backend/uvicorn.log
+backend/*.log
+backend/test*.json
+backend/test*.res
+backend/test*.txt
+
+# ── Node / frontend ───────────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# ── Editor / OS ───────────────────────────────────────────────────────────────
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# ── Secrets / generic ─────────────────────────────────────────────────────────
+.env
 keys
 history

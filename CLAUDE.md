@@ -158,7 +158,7 @@ waggle/
 | **M2** | Schema extraction + Semantic YAML | ✅ Done |
 | **M3** | Agent harness + query tool | ✅ Done |
 | **M4** | Validation engine | ✅ Done (built alongside Day 6) |
-| **M5** | React frontend + Auth UI | 🔄 Day 10 next |
+| **M5** | React frontend + Auth UI | 🔄 Day 11 done — dashboard, chat, 8 renderers, source ownership |
 | **M5b** | Auth backend (JWT + users + artifacts + DuckDB) | ✅ Done (Day 9) |
 | **M6** | BigQuery connector | ⬜ Not started |
 | **M7** | Polish, testing, demo | ⬜ Not started |
@@ -485,19 +485,150 @@ POST /sources/upload  test_sales.csv (4 rows, 4 cols)
 
 ---
 
+### Day 10 — React frontend scaffold ✅
+**Files created:** `frontend/` — entire frontend tree  
+**Node:** v25.9.0, **pnpm:** 10.33.2, **React:** 19.2.5, **Vite:** 8.0.10, **Tailwind:** 4.2.4
+
+**Folder structure built:**
+```
+frontend/src/
+├── types/index.ts + axios.d.ts     # all TS interfaces from backend contracts
+├── lib/api.ts                       # two Axios instances + service helpers
+├── lib/queryClient.ts               # TanStack Query config
+├── lib/utils.ts                     # shadcn cn()
+├── store/authStore.ts               # Zustand: in-memory token, user, isInitialized
+├── hooks/useAuth.ts + useLogin.ts + useRegister.ts + useToast.ts
+├── components/ui/                   # button, input, label, card, toast (written manually)
+├── components/shared/               # ProtectedRoute, LoadingSpinner, WaggleLogo, Toaster
+├── components/layout/               # RootLayout, AuthLayout, DashboardLayout
+└── pages/                           # LandingPage, LoginPage, RegisterPage, DashboardPage
+```
+
+**Key architecture decisions:**
+- **Tailwind v4 CSS-first**: no `tailwind.config.js` — colors defined via `@theme` block in `globals.css` using hex values directly. `@import "tailwindcss"` is the only directive needed.
+- **shadcn/ui written manually**: the v3 CLI launches an interactive TUI (preset picker) that doesn't work with piped input. All components (button, input, label, card, toast) written by hand — no difference at runtime.
+- **Two Axios instances** (`authApi` / `api`) to prevent infinite 401 refresh loop: `authApi` has no interceptors and is used exclusively for auth endpoints; `api` has request+response interceptors that inject the Bearer token and handle silent token refresh.
+- **Direct store import** in `api.ts` interceptors: no circular dependency exists (`authStore` only imports zustand + types), so `useAuthStore.getState()` is called directly instead of `require()`.
+- **`isInitialized` flag** in Zustand: `ProtectedRoute` shows a spinner until the silent refresh bootstrap in `RootLayout` completes. Without this, hard refresh flashes a redirect to /login before the cookie is validated.
+- **Vite proxy** `/api/*` → strips `/api` → `:8000`. Zero code changes needed for production (nginx rewrite replaces the proxy).
+
+**Problems hit and fixed:**
+1. **Vite scaffold used vanilla TS template** (no React) — fixed by manually adding `react`, `react-dom`, `@vitejs/plugin-react` and updating `vite.config.ts`.
+2. **TypeScript `baseUrl` deprecated in TS 7.0** — silenced with `"ignoreDeprecations": "6.0"` in tsconfig.
+3. **CSS import type error** — added `src/vite-env.d.ts` with `/// <reference types="vite/client" />`.
+4. **`require()` in interceptor** — replaced with direct `import { useAuthStore }` since no circular dependency exists.
+
+**Test results:**
+```
+pnpm tsc --noEmit     → 0 errors  ✅
+GET /api/health       → {"status":"ok"} via Vite proxy  ✅
+http://localhost:3000 → Landing page renders with Hivenet orange  ✅
+/register             → form visible, submits to real backend  ✅
+/login                → form visible  ✅
+/dashboard (logged out) → redirects to /login  ✅
+Hard refresh logged-in → spinner → stays on dashboard  ✅
+```
+
+---
+
+### Day 11 — Sources as first-class users-owned entities + Dashboard + Chat UI ✅
+
+**Why this was a refactor, not just UI work:** Before Day 11, `data/connections.json` was a global JSON file shared across all users. Adding a "list my sources" endpoint cleanly required ownership at the data layer — anything else would have been spaghetti. So Day 11 promoted sources to a real first-class entity before any UI was written.
+
+**Backend — sources became a real entity:**
+
+`auth/db.py` — added `waggle_app.sources` table:
+```sql
+sources(id UUID PK, user_id UUID FK→users CASCADE, label TEXT,
+        source_type TEXT, config JSONB, created_at)
+```
+Indexed on `user_id`. `config` is the per-type bag (postgres credentials, or DuckDB `{file_path, original_name, file_id, table_name}`). Plus async helpers: `create_source`, `get_source` (no auth, for tools), `get_source_for_user` (route-layer ownership), `list_sources_for_user`, `rename_source`, `delete_source`.
+
+`connectors/store.py` — rewritten as a thin async facade over `auth.db`. The old `data/connections.json` file is no longer read or written. Functions now: `save_source`, `get_source`, `get_source_for_user`, `list_sources_for_user`, `rename_source_for_user`, `delete_source_for_user`.
+
+`api/_deps.py` (new) — single `require_source` FastAPI dependency. 404 on ownership mismatch (don't leak existence), 401 if no token.
+
+**Routes that now require auth + ownership:** `/connect`, `/schema/{id}`, `/schema/{id}/llm-context`, `/semantic/{id}`, `/query/{id}`, `/session*`. Each verifies `current_user.id` owns the source before doing any work.
+
+**`api/routes/sources.py` — full CRUD:**
+- `POST /sources/upload` — file upload (was already there, now writes to Postgres)
+- `GET /sources` — list user's sources
+- `GET /sources/{id}` — single source (no secrets)
+- `PATCH /sources/{id}` — rename label
+- `DELETE /sources/{id}` — also unlinks the uploaded file and clears the cached schema
+
+**db_type dispatch in tools:**
+- `agent/tools/schema_tool.py:get_schema()` — dispatches on `source["source_type"]`. `duckdb` → `extract_schema_from_file`, `postgres` → `extract_schema`. Per-source schema cache unchanged.
+- `agent/tools/query_tool.py:run_query()` — picks `_pg_fetch` or `_duck_fetch` from the source type and threads it as `fetch_fn` into the validation engine.
+- `validation/engine.py:validate()` — gained a `fetch_fn` parameter. The cross-query check no longer hardcodes `from connectors.postgres import fetch_with_config`. Now any connector that matches the `(config, sql) → list[dict]` signature works.
+
+**Pre-existing DuckDB bug fixed:** `fetch_from_file` was using `Path(file_path).stem` (the UUID) as the table name, but `extract_schema_from_file` registered the view under `display_name`. So queries the LLM wrote against `sales_smoke` were being run against a view named after the UUID. Now `fetch_from_file` accepts an explicit `table_name` param threaded through from `source["config"]["table_name"]`.
+
+**Frontend — dashboard + chat shipped:**
+
+`types/index.ts` — added `Source`, `SourceType`, `ToolCall`, `QueryToolResult`, `SchemaToolResult`, `ValidationReport`, `Row`. `QueryResponse.tool_calls` is now properly typed so the chat can extract SQL + data + confidence from `tool_calls[0].result`.
+
+`lib/api.ts` — full `sourceService` (list/get/rename/delete/upload-with-progress).
+
+`hooks/`:
+- `useSources` — TanStack list/upload/connect/rename/delete with proper invalidation
+- `useArtifacts` — TanStack list/get/create/update/delete
+- `useChat` — manages a conversation against one source. Optimistic placeholder while `/query` is in flight, persists `session_id` returned from the backend so follow-ups continue the same conversation.
+
+`lib/artifactInfer.ts` — `summarizeColumns` (numeric/temporal/categorical/boolean), `inferArtifactType` (1×1 numeric → metric, time + numeric → line, ≤6 categories → pie, >6 → bar, two numerics → scatter), `pickAxes`.
+
+`components/ui/` — added `dialog`, `tabs`, `dropdown-menu`, `select`, `separator`, `badge`, `skeleton`, `scroll-area` (all Radix-backed, written by hand because the shadcn CLI is interactive).
+
+`components/artifacts/` — 8 renderers + dispatcher + shared types. Charts use Recharts with the Hivenet orange palette + theme variables. Each renderer takes `{data, styleConfig, name}` and degrades to an explanation pane when the data shape doesn't match.
+
+`components/dashboard/`:
+- `SourceSidebar` — left nav, list of sources with overflow menu (open in chat, rename via prompt, delete with confirm), `+` opens AddSourceDialog
+- `AddSourceDialog` — Tabs: Upload File (drag-drop + native picker, progress bar) / Connect Postgres (form)
+- `DashboardGrid` — responsive 1/2/3/4-column grid of `ArtifactCard`s, filtered by selected source
+- `ArtifactCard` — fetches its data by re-running its question through `/query` (so validation stays in the loop and we don't trust raw stored SQL forever), renders via `ArtifactRenderer`, has overflow menu (open chat, refresh, delete)
+
+`components/chat/`:
+- `ChatPage` — split-pane: 420–480px conversation column on the left, artifact panel filling the rest. Source header with back button.
+- `MessageList` — scrolling bubble list, click an assistant bubble that backs a query result to focus its artifact in the right pane
+- `ChatInput` — autosizing textarea, Enter to send, Shift+Enter for newline
+- `CurrentArtifactPanel` — shows the latest (or focused) query result, type picker (auto-inferred but user can override per-render), confidence badge, collapsible SQL view, "Save" button → `SaveArtifactDialog`
+- `SaveArtifactDialog` — name + type, posts to `/artifacts`
+
+Routes: `/dashboard` (grid + sidebar), `/chat/:connectionId` (split-pane).
+
+**Smoke test (with the dev server up):**
+```
+POST /auth/register      → 200 + access token + refresh cookie  ✅
+POST /sources/upload     → 201 sales_smoke.csv → 4 rows, 4 cols, source_type=duckdb  ✅
+GET  /sources            → 1 source listed for owner             ✅
+POST /query/{id} "what is the total revenue?"
+  → SQL: SELECT SUM(s.revenue) FROM sales_smoke s
+  → data: [{"sum(s.revenue)": 4401.0}]    (1200.5+800+1500+900.5 ✓)
+  → response: "The total revenue is $4401.0..."
+  → 1 attempt, validation passed                                 ✅
+
+Ownership checks (second user / no auth):
+  GET  /sources                  → []                            ✅
+  GET  /sources/{otherUserId}    → 404                           ✅
+  POST /query/{otherUserId}      → 404                           ✅
+  POST /query (no Bearer)        → 401                           ✅
+```
+
+**Files changed (~30 new, ~10 modified):**
+- Backend new: `api/_deps.py`
+- Backend modified: `auth/db.py`, `connectors/store.py`, `connectors/duckdb.py`, `validation/engine.py`, `agent/tools/schema_tool.py`, `agent/tools/query_tool.py`, `api/routes/{connect,sources,schema,semantic,query,session}.py`
+- Frontend new: `pages/ChatPage.tsx`, `lib/artifactInfer.ts`, `hooks/useSources.ts`, `hooks/useArtifacts.ts`, `hooks/useChat.ts`, all of `components/artifacts/`, `components/dashboard/`, `components/chat/`, plus 8 new UI primitives in `components/ui/`
+- Frontend modified: `types/index.ts`, `lib/api.ts`, `pages/DashboardPage.tsx`, `components/layout/DashboardLayout.tsx`, `App.tsx`
+
+**Known carry-over items, not blocking:**
+- `connectors/bigquery.py` still empty (M6).
+- Old `data/connections.json` file on disk is now unread; can be deleted.
+- `semantic/validator.py` empty file still there.
+- The directory is not a git repo locally; recommend `git init` before Day 12 so we get real diffs.
+
+---
+
 ## What's Next — Ordered Priority
-
-### Day 10 — React frontend scaffold
-- [ ] Vite + React 18 + TypeScript + shadcn/ui + Tailwind
-- [ ] Hivenet color tokens (`#E8610A` orange primary)
-- [ ] React Router v6 routes wired
-- [ ] TanStack Query + Zustand installed
-- [ ] Landing page + Auth pages (login/register)
-
-### Day 11 — Dashboard + Chat UI
-- [ ] Dashboard: artifact grid, source sidebar
-- [ ] Chat: split-pane conversation + artifact panel
-- [ ] All artifact renderers: metric, table, bar, line, area, pie, scatter, progress
 
 ### Day 12 — Artifact editor + onboarding flow
 - [ ] Gear icon → Sheet with Query / Style / Schedule tabs
@@ -601,4 +732,4 @@ That project is separate from this codebase. Lessons learned:
 
 ---
 
-*Last updated: 2026-04-28 — Day 9 done: JWT auth, artifacts API, DuckDB CSV connector. Frontend starts Day 10.*
+*Last updated: 2026-05-06 — Day 11 done: sources promoted to user-owned first-class entity (Postgres-backed, ownership enforced everywhere), full dashboard (sidebar + grid + AddSource dialog), full chat (split-pane + 8 artifact renderers + save flow), DuckDB table-name bug fixed. Day 12 next: artifact editor sheet + onboarding flow.*
