@@ -11,7 +11,8 @@ Responsible for:
 import json
 from pathlib import Path
 from connectors.postgres import extract_schema
-from connectors.store import get_connection
+from connectors.duckdb import extract_schema_from_file
+from connectors.store import get_source
 
 # Simple file cache — avoids re-extracting on every request
 CACHE_DIR = Path("data/schemas")
@@ -33,18 +34,30 @@ def _save_cache(connection_id: str, schema: dict):
 
 async def get_schema(connection_id: str, force_refresh: bool = False) -> dict:
     """
-    Get schema for a connection. Uses cache unless force_refresh=True.
+    Get schema for a source. Uses cache unless force_refresh=True.
+    Dispatches on source_type so postgres goes through asyncpg
+    and duckdb (file uploads) goes through the in-process reader.
     """
     if not force_refresh:
         cached = _load_cache(connection_id)
         if cached:
             return cached
 
-    config = get_connection(connection_id)
-    if not config:
-        raise ValueError(f"Connection {connection_id} not found")
+    source = await get_source(connection_id)
+    if not source:
+        raise ValueError(f"Source {connection_id} not found")
 
-    schema = await extract_schema(config)
+    cfg         = source["config"]
+    source_type = source["source_type"]
+
+    if source_type == "duckdb":
+        display_name = cfg.get("table_name") or Path(cfg["file_path"]).stem
+        schema = extract_schema_from_file(cfg["file_path"], display_name=display_name)
+    elif source_type == "postgres":
+        schema = await extract_schema(cfg)
+    else:
+        raise ValueError(f"Unsupported source_type: {source_type}")
+
     _save_cache(connection_id, schema)
     return schema
 

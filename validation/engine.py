@@ -2,8 +2,10 @@
 from __future__ import annotations
 import json
 import numbers
-from typing import Optional
+from typing import Awaitable, Callable, Optional
 from semantic.models import SemanticModel
+
+FetchFn = Callable[[dict, str], Awaitable[list[dict]]]
 
 
 async def validate(
@@ -12,11 +14,15 @@ async def validate(
     data: list[dict],
     model: SemanticModel,
     config: Optional[dict] = None,
+    fetch_fn: Optional[FetchFn] = None,
 ) -> dict:
     """
     Run up to 5 validation checks on a SQL result.
     Checks 1-3 are free (pure Python). Checks 4-5 cost LLM tokens
-    and only run when checks 1-3 pass and a DB config is provided.
+    and only run when checks 1-3 pass and a DB config + fetch_fn are provided.
+
+    The fetch_fn lets the caller pick the right connector (postgres vs duckdb)
+    so cross-query verification works against any source type.
     """
     checks: list[str]   = []
     failures: list[str] = []
@@ -26,11 +32,12 @@ async def validate(
     _check_assertions(model, data, checks, failures)
 
     cheap_passed = len(failures) == 0
+    can_run_db_checks = cheap_passed and config and fetch_fn
 
-    if cheap_passed and config:
-        await _check_cross_query(question, sql, data, config, checks, failures)
+    if can_run_db_checks:
+        await _check_cross_query(question, sql, data, config, fetch_fn, checks, failures)
 
-    if cheap_passed and not failures and config:
+    if can_run_db_checks and not failures:
         await _check_llm_sanity(question, data, checks, failures)
 
     passed = len(failures) == 0
@@ -146,6 +153,7 @@ async def _check_cross_query(
     sql: str,
     data: list[dict],
     config: dict,
+    fetch_fn: FetchFn,
     checks: list[str],
     failures: list[str],
 ) -> None:
@@ -163,7 +171,6 @@ async def _check_cross_query(
     checks.append("cross_query")
     try:
         from agent.llm import generate
-        from connectors.postgres import fetch_with_config
 
         count_prompt = (
             f"Write a simple COUNT(*) SQL query that counts the rows relevant to: "
@@ -173,7 +180,7 @@ async def _check_cross_query(
         if raw_sql.startswith("```"):
             raw_sql = "\n".join(raw_sql.split("\n")[1:-1]).strip()
 
-        result = await fetch_with_config(config, raw_sql)
+        result = await fetch_fn(config, raw_sql)
         if result:
             expected = list(result[0].values())[0]
             actual   = len(data)

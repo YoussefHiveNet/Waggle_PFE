@@ -26,8 +26,9 @@ from typing import Optional
 
 from agent.llm import generate
 from agent.tools.schema_tool import get_schema, format_for_llm
-from connectors.postgres import fetch_with_config
-from connectors.store import get_connection
+from connectors.postgres import fetch_with_config as _pg_fetch
+from connectors.duckdb import fetch_with_config as _duck_fetch
+from connectors.store import get_source
 from semantic.engine import SemanticEngine
 from semantic.models import SemanticModel, Cube
 from validation.engine import validate
@@ -72,9 +73,13 @@ async def run_query(connection_id: str, question: str) -> dict:
       error    — human-readable reason
       attempts — list of error strings per attempt
     """
-    config = get_connection(connection_id)
-    if not config:
-        raise ValueError(f"Connection '{connection_id}' not found")
+    source = await get_source(connection_id)
+    if not source:
+        raise ValueError(f"Source '{connection_id}' not found")
+
+    config      = source["config"]
+    source_type = source["source_type"]
+    fetch_fn    = _duck_fetch if source_type == "duckdb" else _pg_fetch
 
     schema = await get_schema(connection_id)
 
@@ -97,7 +102,7 @@ async def run_query(connection_id: str, question: str) -> dict:
 
         # Execute
         try:
-            raw_data = await fetch_with_config(config, sql)
+            raw_data = await fetch_fn(config, sql)
         except Exception as e:
             errors.append(f"[attempt {attempt + 1}] DB error: {e}")
             continue
@@ -106,7 +111,8 @@ async def run_query(connection_id: str, question: str) -> dict:
 
         # Validate (checks 1-3 free; checks 4-5 cost one LLM call each)
         report = await validate(
-            question, sql, data, model or _empty_model(), config
+            question, sql, data, model or _empty_model(),
+            config=config, fetch_fn=fetch_fn,
         ) if model else {
             "passed": True, "checks": [], "failures": [], "confidence": 0.70
         }

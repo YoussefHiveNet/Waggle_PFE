@@ -72,16 +72,23 @@ def extract_schema_from_file(file_path: str, display_name: Optional[str] = None)
 
 # ── QUERY EXECUTION ───────────────────────────────────────────────────────────
 
-def fetch_from_file(file_path: str, sql: str) -> list[dict]:
+def fetch_from_file(
+    file_path: str, sql: str, table_name: Optional[str] = None
+) -> list[dict]:
     """
     Execute SQL against the CSV file.
-    The table name in the SQL must match the filename stem.
-    """
-    con = _conn()
-    table_name = Path(file_path).stem
-    con.execute(f"CREATE VIEW '{table_name}' AS SELECT * FROM read_csv_auto('{file_path}')")
 
-    result = con.execute(sql).fetchall()
+    The view is registered under `table_name` (default: the file's stem).
+    The LLM-facing schema uses the same display name, so SQL it generates
+    references the right view.
+    """
+    con  = _conn()
+    name = table_name or Path(file_path).stem
+    con.execute(
+        f"CREATE VIEW '{name}' AS SELECT * FROM read_csv_auto('{file_path}')"
+    )
+
+    result    = con.execute(sql).fetchall()
     col_names = [desc[0] for desc in con.description]
     con.close()
 
@@ -90,13 +97,13 @@ def fetch_from_file(file_path: str, sql: str) -> list[dict]:
 
 async def fetch_with_config(config: dict, sql: str) -> list[dict]:
     """
-    Async-compatible wrapper — matches the postgres.py interface
-    so the query_tool and validation engine work without modification.
+    Async-compatible wrapper — matches postgres.py's interface so query_tool
+    and validation engine work uniformly.
     """
     file_path = config.get("file_path")
     if not file_path:
         raise ValueError("DuckDB config missing 'file_path'")
-    return fetch_from_file(file_path, sql)
+    return fetch_from_file(file_path, sql, table_name=config.get("table_name"))
 
 
 # ── FILE MANAGEMENT ───────────────────────────────────────────────────────────

@@ -46,6 +46,20 @@ async def init_db() -> None:
         """)
 
         await conn.execute("""
+            CREATE TABLE IF NOT EXISTS waggle_app.sources (
+                id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id      UUID NOT NULL REFERENCES waggle_app.users(id) ON DELETE CASCADE,
+                label        TEXT NOT NULL,
+                source_type  TEXT NOT NULL,
+                config       JSONB NOT NULL,
+                created_at   TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS sources_user_id_idx ON waggle_app.sources(user_id)"
+        )
+
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS waggle_app.artifacts (
                 id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 user_id          UUID NOT NULL REFERENCES waggle_app.users(id) ON DELETE CASCADE,
@@ -209,3 +223,90 @@ async def delete_artifact(artifact_id: str, user_id: str) -> bool:
             artifact_id, user_id
         )
         return result == "DELETE 1"
+
+
+# ── SOURCE HELPERS ────────────────────────────────────────────────────────────
+
+async def create_source(
+    user_id: str, label: str, source_type: str, config: dict
+) -> dict:
+    import json
+    pool = await get_app_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO waggle_app.sources (user_id, label, source_type, config)
+            VALUES ($1, $2, $3, $4::jsonb)
+            RETURNING id, user_id, label, source_type, config, created_at
+            """,
+            user_id, label, source_type, json.dumps(config),
+        )
+        return _source_row(row)
+
+
+async def get_source(source_id: str) -> dict | None:
+    """Lookup without auth — used by tools that already received a vetted id."""
+    pool = await get_app_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, user_id, label, source_type, config, created_at "
+            "FROM waggle_app.sources WHERE id = $1",
+            source_id,
+        )
+        return _source_row(row) if row else None
+
+
+async def get_source_for_user(source_id: str, user_id: str) -> dict | None:
+    pool = await get_app_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, user_id, label, source_type, config, created_at "
+            "FROM waggle_app.sources WHERE id = $1 AND user_id = $2",
+            source_id, user_id,
+        )
+        return _source_row(row) if row else None
+
+
+async def list_sources_for_user(user_id: str) -> list[dict]:
+    pool = await get_app_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, user_id, label, source_type, config, created_at "
+            "FROM waggle_app.sources WHERE user_id = $1 ORDER BY created_at DESC",
+            user_id,
+        )
+        return [_source_row(r) for r in rows]
+
+
+async def rename_source(source_id: str, user_id: str, new_label: str) -> dict | None:
+    pool = await get_app_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "UPDATE waggle_app.sources SET label = $1 "
+            "WHERE id = $2 AND user_id = $3 "
+            "RETURNING id, user_id, label, source_type, config, created_at",
+            new_label, source_id, user_id,
+        )
+        return _source_row(row) if row else None
+
+
+async def delete_source(source_id: str, user_id: str) -> bool:
+    pool = await get_app_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM waggle_app.sources WHERE id = $1 AND user_id = $2",
+            source_id, user_id,
+        )
+        return result == "DELETE 1"
+
+
+def _source_row(row) -> dict:
+    """Decode JSONB config from asyncpg back to a dict."""
+    import json
+    d = dict(row)
+    cfg = d.get("config")
+    if isinstance(cfg, str):
+        d["config"] = json.loads(cfg)
+    d["id"] = str(d["id"])
+    d["user_id"] = str(d["user_id"])
+    return d
