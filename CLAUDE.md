@@ -681,12 +681,52 @@ After restart, `globals.css?direct` went from <100B inert text to 45KB of genera
 
 ---
 
+### Day 12.5 — Demo-blocker fixes + waggle_hard stress-test DB ✅
+
+Discovered while demoing the project. Five distinct problems, all fixed in one commit (`ba87215`).
+
+**Files modified:** `backend/agent/runtime.py`, `backend/auth/jwt.py`, `frontend/src/components/onboarding/SourceOnboardingDialog.tsx`, `frontend/src/components/dashboard/SourceSidebar.tsx`
+**Files created:** `backend/scripts/seed_hard.sql`
+
+**Bug 1 — Tool-JSON leaked into chat (critical):** The very first chat response showed raw `{"tool": "query", "params": {...}}` text instead of executing the tool. Root cause in `agent/runtime.py:_parse_tool_call`: the parser only matched when the response **started** with `{`. Llama 3.3 sometimes prefixes its tool call with prose ("I would need to run a query. {...}"), so the parser bailed and the whole prose+JSON string became the user-facing answer. **Fix:** rewrote the parser as a brace-walking scanner that extracts the first balanced `{...}` block containing `"tool"` from anywhere in the response, then `json.loads` it. Backwards-compatible — pure-JSON responses still parse.
+
+**Bug 2 — Forced logout during onboarding wizard:** User was filling clarification answers, idled past 15 min, hit "Generate model" and was bounced to `/login`, losing all typed answers. Root cause: `auth/jwt.py:ACCESS_TTL = 15 minutes` plus the silent-refresh `catch` in `frontend/src/lib/api.ts:54` which `window.location.href`s on any refresh failure. **Fix (defense in depth, two layers):**
+  1. `auth/jwt.py`: `ACCESS_TTL` 15 min → **1 h**, `REFRESH_TTL` 7 d → **30 d**. Now matches the realistic idle pattern of a wizard.
+  2. `SourceOnboardingDialog`: each keystroke saves answers to `localStorage.setItem('waggle.onboarding.{id}', ...)`. On wizard re-mount, `loadDraft(id)` seeds the answers state. Cleared only on successful generation (`status === 'ok'`). Survives forced re-login, browser refresh, accidental dialog close.
+
+**Bug 3 — No way to add semantic context after source creation:** Wizard only auto-opened on `onCreated`; if the user skipped or closed it, there was no path back. **Fix:** added "Configure semantic model" entry (sparkle icon) to each source's overflow menu in `SourceSidebar`. Wires a new `onConfigure` callback through `SourceRow` → opens `SourceOnboardingDialog` for that connection_id. Backend already supported re-runs (POST /semantic/{id} overwrites).
+
+**`waggle_hard` 2.0 — 18-month stress-test database:** The previous seed only spanned 50 days of order history, so "revenue by month" only showed 3 months. **Fix:** rewrote `seed_hard.sql` time-series generators to spread records over 540 days (~18 months). Volume increases:
+  - Orders: 1,200 → 5,400
+  - Order items: 4,000 → 15,000
+  - Invoices / lines: 1,200 / 3,000 → 5,400 / 12,000
+  - Payments: 1,500 → 6,500 (with periodic refunds, every 50th)
+  - Usage events: 5,000 → 38,000
+  - Tickets / messages: 800 / 3,000 → 2,400 / 8,000
+  - Audit log: 5,000 → 18,000
+  - EventLog: 2,000 → 8,000
+  - Stock movements: 3,000 → 8,000
+  - Raw metrics: 3,000 → 10,000
+  - Total: ~30k rows → ~80k+ time-series rows
+Verified: `SELECT date_trunc('month', ordered_at), COUNT(*) FROM orders GROUP BY 1` returns 19 months, ~300 orders/month.
+
+The 50-table schema is unchanged: HR/Org · CRM · Products · Sales · SaaS · Support · Geography · Audit/Outliers. Same stress patterns: 6 composite PK junction tables, self-refs (employees.manager_id, product_categories.parent_id), JSONB columns, array column, PascalCase `"EventLog"` outlier, mixed-case status values (`'paid'`/`'PAID'`/`'Paid'`), soft-deletes, denormalized `raw_metrics` (no FKs), `orphan_notes` (zero relationships).
+
+**Bug 4 (carry-over surfaced):** `backend/semantic/models/{id}.yaml` files are runtime user data committed to git. Should be added to `.gitignore` in Day 13 — the file from this demo session was deliberately not staged.
+
+**Verification:** `pnpm tsc --noEmit` exit 0. Backend restarted; both servers healthy. Reseed runs in <30s; idempotent (`DROP TABLE ... CASCADE` at top).
+
+---
+
 ## What's Next — Ordered Priority
 
 ### Day 13 — polish + backlog
 - [ ] Backend cron scheduler that actually fires `refresh_schedule` (currently client-only)
 - [ ] Style tab: per-axis-key dropdowns derived from latest result columns
 - [ ] Anchor data paths to `Path(__file__).parent` (Day 11 carry-over)
+- [ ] Add `backend/semantic/models/*.yaml` to `.gitignore` (runtime user data)
+- [ ] Sliding-window refresh: extend cookie expiry on each authed request (currently fixed 30-day)
+- [ ] Promote `/tmp/waggle_demo_seed.sql` into `backend/scripts/seed_demo.sql` (companion to seed_hard.sql)
 
 ### M6 — BigQuery connector
 - [ ] `connectors/bigquery.py` — same interface as `postgres.py`
@@ -786,4 +826,4 @@ That project is separate from this codebase. Lessons learned:
 
 ---
 
-*Last updated: 2026-05-07 — Day 12 done. Artifact editor sheet (Query / Style / Schedule tabs) wired into every `ArtifactCard` with a frontend `setInterval` poller for `refresh_schedule`. Source onboarding wizard auto-opens after a new source is added — fetches clarification questions via `POST /semantic/{id}`, lets the user answer or skip, then generates the YAML semantic model. New `Sheet` UI primitive added (Radix Dialog right-slide). `pnpm tsc --noEmit` clean. Day 13 next: backend cron scheduler + axis-key dropdowns + path anchoring carry-over.*
+*Last updated: 2026-05-09 — Day 12 + Day 12.5 done. Day 12: artifact editor sheet (Query / Style / Schedule tabs) on every `ArtifactCard` with client-side poller for `refresh_schedule`; source onboarding wizard auto-opens after a new source is added (calls `POST /semantic/{id}`); new `Sheet` UI primitive (Radix Dialog right-slide). Day 12.5 (demo-driven fixes): runtime tool-call parser now extracts JSON from anywhere in the response (was leaking raw `{"tool":...}` into chat); `ACCESS_TTL` 15min→1h + `REFRESH_TTL` 7d→30d; wizard answers persist in `localStorage` so a forced re-login doesn't lose them; "Configure semantic model" entry added to each source's overflow menu; `waggle_hard` reseeded with 18 months of history (~80k+ time-series rows across orders/payments/invoices/usage/tickets/audit). All committed in `ba87215`. `pnpm tsc --noEmit` clean.*
