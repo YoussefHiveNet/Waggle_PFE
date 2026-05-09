@@ -657,11 +657,36 @@ After restart, `globals.css?direct` went from <100B inert text to 45KB of genera
 
 ---
 
+### Day 12 — Artifact editor sheet + onboarding wizard ✅
+
+**Files created:** `frontend/src/components/ui/sheet.tsx`, `components/artifacts/ArtifactEditorSheet.tsx`, `components/onboarding/SourceOnboardingDialog.tsx`
+**Files modified:** `components/dashboard/ArtifactCard.tsx`, `components/dashboard/SourceSidebar.tsx`, `lib/api.ts`
+
+**Goal 1 — Artifact editor:**
+- New `Sheet` UI primitive (Radix Dialog with right-slide variant; manual because the shadcn CLI is interactive — same approach as the rest of `components/ui/`).
+- `ArtifactEditorSheet` — three tabs:
+  - **Query**: editable name + question textarea. Saving with a changed question re-runs through `queryService.run` (validation pipeline stays in the loop) and stores the new SQL.
+  - **Style**: chart-type dropdown, primary color (color picker + hex input on `style_config.colors[0]`), legend / grid toggles, prefix / suffix / decimals, target value (only when `progress`).
+  - **Schedule**: persisted as `every:Ns` string (off / 30s / 5m / 15m / 1h / 6h / 24h). Workaround for Radix Select's no-empty-string rule: `__off__` sentinel mapped to `""` on change.
+- `ArtifactCard` — new "Edit" menu item, clock icon when a schedule is set, and a `setInterval` poller in a `useEffect` keyed on `[id, refresh_schedule]`. Schedule parser rejects sub-5s cadences as a guard.
+
+**Goal 2 — Onboarding wizard:**
+- `lib/api.ts` — added `semanticService.generate(connectionId, business_rules?)` and `.get()` plus `SemanticGenerateResponse` discriminated union (`needs_input | ok | error`).
+- `SourceOnboardingDialog` — multi-phase: `loading → questions → generating → done | error`. `loading` fires `POST /semantic/{id}` with no body to get clarification questions; `Generate model` POSTs again with `business_rules`; `Skip questions` POSTs with `{}`. Skippable at every step. `Start chatting` routes to `/chat/{id}`.
+- `SourceSidebar` — `onCreated` from `AddSourceDialog` now also opens the onboarding dialog with the new `connection_id`. Closing it leaves the source usable without a semantic model (chat already handles that case).
+
+**Frontend poller (out of scope to backend cron):** Day 12 intentionally stops at a client-side `setInterval` while the dashboard tab is open. No backend scheduler — that's a stretch goal.
+
+**Verification:** `pnpm tsc --noEmit` → 0 errors. Both servers healthy at `:8000` / `:3000`.
+
+---
+
 ## What's Next — Ordered Priority
 
-### Day 12 — Artifact editor + onboarding flow
-- [ ] Gear icon → Sheet with Query / Style / Schedule tabs
-- [ ] Onboarding: Connect DB → LLM Q&A → Model ready
+### Day 13 — polish + backlog
+- [ ] Backend cron scheduler that actually fires `refresh_schedule` (currently client-only)
+- [ ] Style tab: per-axis-key dropdowns derived from latest result columns
+- [ ] Anchor data paths to `Path(__file__).parent` (Day 11 carry-over)
 
 ### M6 — BigQuery connector
 - [ ] `connectors/bigquery.py` — same interface as `postgres.py`
@@ -761,4 +786,4 @@ That project is separate from this codebase. Lessons learned:
 
 ---
 
-*Last updated: 2026-05-06 — Day 11 done + monorepo restructure + Tailwind v4 plugin fix. Sources promoted to user-owned first-class entity (Postgres-backed, ownership enforced everywhere), full dashboard, full chat with 8 artifact renderers, DuckDB table-name bug fixed. Repo is now a single-root monorepo with `backend/` and `frontend/` siblings. Frontend styling now actually applies (was rendering as raw text before — needed `@tailwindcss/vite` plugin). Demo Postgres `waggle_demo` seeded. Day 12 next: artifact editor sheet + onboarding flow.*
+*Last updated: 2026-05-07 — Day 12 done. Artifact editor sheet (Query / Style / Schedule tabs) wired into every `ArtifactCard` with a frontend `setInterval` poller for `refresh_schedule`. Source onboarding wizard auto-opens after a new source is added — fetches clarification questions via `POST /semantic/{id}`, lets the user answer or skip, then generates the YAML semantic model. New `Sheet` UI primitive added (Radix Dialog right-slide). `pnpm tsc --noEmit` clean. Day 13 next: backend cron scheduler + axis-key dropdowns + path anchoring carry-over.*

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Database, FileText, MoreHorizontal, Plus, Trash2, Pencil } from "lucide-react";
+import { Database, FileText, MoreHorizontal, Plus, Trash2, Pencil, Sparkles } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuSeparator,
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSources, useDeleteSource, useRenameSource } from "@/hooks/useSources";
 import { AddSourceDialog } from "./AddSourceDialog";
+import { SourceOnboardingDialog } from "@/components/onboarding/SourceOnboardingDialog";
 import type { Source } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +21,7 @@ interface Props {
 export function SourceSidebar({ selectedId, onSelect }: Props) {
   const { data: sources, isLoading } = useSources();
   const [adding, setAdding] = useState(false);
+  const [onboardingId, setOnboardingId] = useState<string | null>(null);
 
   return (
     <aside className="w-64 shrink-0 border-r border-[var(--color-border)] bg-[var(--color-card)] flex flex-col">
@@ -46,6 +48,7 @@ export function SourceSidebar({ selectedId, onSelect }: Props) {
                 source={s}
                 selected={s.connection_id === selectedId}
                 onSelect={() => onSelect(s.connection_id)}
+                onConfigure={() => setOnboardingId(s.connection_id)}
               />
             ))}
           </ul>
@@ -59,15 +62,26 @@ export function SourceSidebar({ selectedId, onSelect }: Props) {
       <AddSourceDialog
         open={adding}
         onOpenChange={setAdding}
-        onCreated={(id) => onSelect(id)}
+        onCreated={(id) => {
+          onSelect(id);
+          setOnboardingId(id);
+        }}
+      />
+
+      <SourceOnboardingDialog
+        connectionId={onboardingId}
+        open={!!onboardingId}
+        onOpenChange={(o) => { if (!o) setOnboardingId(null); }}
       />
     </aside>
   );
 }
 
 function SourceRow({
-  source, selected, onSelect,
-}: { source: Source; selected: boolean; onSelect: () => void }) {
+  source, selected, onSelect, onConfigure,
+}: {
+  source: Source; selected: boolean; onSelect: () => void; onConfigure: () => void;
+}) {
   const navigate = useNavigate();
   const deleteSource = useDeleteSource();
   const renameSource = useRenameSource();
@@ -111,6 +125,9 @@ function SourceRow({
         <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
           <DropdownMenuItem onSelect={() => navigate(`/chat/${source.connection_id}`)}>
             Open in chat
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={onConfigure}>
+            <Sparkles className="h-3.5 w-3.5" /> Configure semantic model
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={handleRename}>
             <Pencil className="h-3.5 w-3.5" /> Rename

@@ -71,19 +71,46 @@ def _tool_descriptions() -> str:
 # ── TOOL CALL PARSER ──────────────────────────────────────────────────────
 
 def _parse_tool_call(text: str) -> Optional[dict]:
-    """Return parsed tool call dict, or None if it's a plain-text response."""
+    """
+    Return parsed tool call dict, or None if it's a plain-text response.
+
+    Tolerates the LLM mixing prose with the JSON block (e.g. "Sure, I'll
+    look that up. {\"tool\": \"query\", ...}"). Scans for the first balanced
+    {...} object that contains a "tool" key.
+    """
     text = text.strip()
+
+    # Strip ``` fences if present
     if text.startswith("```"):
         lines = text.split("\n")
         text  = "\n".join(lines[1:-1]).strip()
-    if not (text.startswith("{") and '"tool"' in text):
+
+    if '"tool"' not in text:
         return None
-    try:
-        parsed = json.loads(text)
-        if "tool" in parsed:
-            return parsed
-    except json.JSONDecodeError:
-        pass
+
+    # Find every candidate `{...}` block by walking braces.
+    # First success wins.
+    start = -1
+    depth = 0
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start >= 0:
+                    candidate = text[start : i + 1]
+                    try:
+                        parsed = json.loads(candidate)
+                    except json.JSONDecodeError:
+                        start = -1
+                        continue
+                    if isinstance(parsed, dict) and "tool" in parsed:
+                        return parsed
+                    start = -1
+
     return None
 
 

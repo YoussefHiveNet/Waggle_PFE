@@ -146,3 +146,26 @@ export const queryService = {
   run: (connectionId: string, body: QueryRequest) =>
     api.post<QueryResponse>(`/query/${connectionId}`, body).then((r) => r.data),
 };
+
+// ── Semantic service ──────────────────────────────────────────────────────────
+
+export interface SemanticQuestion {
+  id: string;
+  question: string;
+  field_hint?: string;
+}
+
+export type SemanticGenerateResponse =
+  | { status: "needs_input"; questions: SemanticQuestion[]; message?: string }
+  | { status: "ok"; model_path: string; cubes: string[]; message?: string }
+  | { status: "error"; detail: string };
+
+export const semanticService = {
+  generate: (connectionId: string, business_rules?: Record<string, string>) =>
+    api
+      .post<SemanticGenerateResponse>(`/semantic/${connectionId}`, { business_rules })
+      .then((r) => r.data),
+
+  get: (connectionId: string) =>
+    api.get(`/semantic/${connectionId}`).then((r) => r.data),
+};
