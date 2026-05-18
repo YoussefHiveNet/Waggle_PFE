@@ -39,11 +39,19 @@ export function ChatPage() {
 
   if (!connectionId) return <Navigate to="/dashboard" replace />;
 
+  // min-h-0 on the flex children + overflow-hidden on the wrapper keeps
+  // long table artifacts from pushing the chat input below the viewport.
+  // Each section now owns its own vertical scroll context.
+  const lastAssistant = chat.messages.length > 0
+    ? [...chat.messages].reverse().find((m) => m.role === "assistant" && !m.pending)
+    : null;
+  const lastAssistantHasNoQuery = lastAssistant !== null && !getQueryResult(lastAssistant?.toolCall);
+
   return (
-    <div className="flex h-full">
+    <div className="flex h-full min-h-0 overflow-hidden">
       {/* Left: conversation */}
-      <section className="flex flex-col w-[420px] xl:w-[480px] shrink-0 border-r border-[var(--color-border)] bg-[var(--color-card)]">
-        <header className="h-12 px-3 flex items-center gap-2 border-b border-[var(--color-border)]">
+      <section className="flex flex-col w-[420px] xl:w-[480px] shrink-0 min-h-0 border-r border-[var(--color-border)] bg-[var(--color-card)]">
+        <header className="h-12 px-3 flex items-center gap-2 border-b border-[var(--color-border)] shrink-0">
           <Button
             variant="ghost"
             size="icon"
@@ -81,11 +89,12 @@ export function ChatPage() {
       </section>
 
       {/* Right: artifact panel */}
-      <section className="flex-1 min-w-0">
+      <section className="flex-1 min-w-0 min-h-0">
         <CurrentArtifactPanel
           result={focusedResult}
           question={focusedQuestion}
           connectionId={connectionId}
+          hasAnswerWithoutQuery={lastAssistantHasNoQuery && !focusedResult}
         />
       </section>
     </div>

@@ -36,6 +36,10 @@ class TokenResponse(BaseModel):
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 
 def _set_refresh_cookie(response: Response, token: str) -> None:
+    # path="/" is required: the frontend hits /api/auth/refresh through the
+    # Vite proxy, and RFC 6265 cookie path-matching demands the request path
+    # *start with* the cookie path. A narrower path like "/auth/refresh"
+    # silently blocks the cookie on every page reload.
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
@@ -43,7 +47,7 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
         secure=False,   # set True in production (HTTPS)
         samesite="lax",
         max_age=int(REFRESH_TTL.total_seconds()),
-        path="/auth/refresh",
+        path="/",
     )
 
 
@@ -117,7 +121,7 @@ async def refresh(response: Response, waggle_refresh: Optional[str] = Cookie(def
 async def logout(response: Response, waggle_refresh: Optional[str] = Cookie(default=None)):
     if waggle_refresh:
         await delete_refresh_token(waggle_refresh)
-    response.delete_cookie(key=COOKIE_NAME, path="/auth/refresh")
+    response.delete_cookie(key=COOKIE_NAME, path="/")
 
 
 @router.get("/me")

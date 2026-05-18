@@ -14,6 +14,7 @@ import type {
   ConnectRequest,
   ConnectResponse,
   Source,
+  Row,
 } from "@/types";
 
 // ── Two Axios instances ───────────────────────────────────────────────────────
@@ -106,6 +107,11 @@ export const artifactService = {
     api.put<Artifact>(`/artifacts/${id}`, body).then((r) => r.data),
 
   delete: (id: string) => api.delete(`/artifacts/${id}`),
+
+  execute: (id: string) =>
+    api
+      .post<{ data: Row[]; row_count: number; last_refreshed: string }>(`/artifacts/${id}/execute`)
+      .then((r) => r.data),
 };
 
 // ── Source service ────────────────────────────────────────────────────────────

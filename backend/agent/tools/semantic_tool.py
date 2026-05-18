@@ -15,6 +15,7 @@ Pipeline:
   5. Save via SemanticEngine
 """
 import json
+import re
 from agent.llm import generate
 from agent.tools.schema_tool import get_schema, format_for_llm, get_foreign_keys
 from semantic.engine import SemanticEngine
@@ -89,7 +90,7 @@ Generate a semantic model. For each table create a cube with:
     e.g. revenue = SUM(CASE WHEN status = 'completed' THEN amount ELSE 0 END)
 - joins: from the FK relationships provided
 
-Respond ONLY as valid JSON:
+Respond ONLY as valid JSON (no markdown fences, no comments, no trailing commas):
 {{
   "cubes": [
     {{
@@ -103,6 +104,25 @@ Respond ONLY as valid JSON:
   "assertions": [
     {{"column": "measure_name", "op": "gte", "value": 0}}
   ]
+}}
+"""
+
+SINGLE_CUBE_PROMPT = """
+You are building a semantic model cube for ONE table.
+
+Table: {table_name}
+Schema: {schema_context}
+Column classifications: {classifications}
+FK relationships: {fk_relationships}
+Business rules: {business_rules}
+
+Respond ONLY as valid JSON for a single cube object (no markdown, no comments):
+{{
+  "name": "table_name",
+  "sql_table": "table_name",
+  "joins": [],
+  "dimensions": [{{"name": "col", "sql": "col", "type": "string", "description": ""}}],
+  "measures": [{{"name": "col", "sql": "col_expr", "type": "sum", "description": ""}}]
 }}
 """
 
@@ -181,13 +201,20 @@ async def generate_semantic_model(
             classifications=json.dumps(classifications, indent=2),
             fk_relationships=fk_text or "none detected",
             business_rules=rules_text or "none provided"
-        )
+        ),
+        max_tokens=8192,
     )
 
+    model_dict = None
     try:
         model_dict = _parse_json(assemble_response)
     except Exception as e:
-        return {"status": "error", "detail": f"LLM output parse failed: {e}"}
+        # Fallback: ask for one cube at a time and assemble manually
+        model_dict = await _assemble_per_cube(
+            schema, classifications, fk_text, rules_text
+        )
+        if model_dict is None:
+            return {"status": "error", "detail": f"LLM output parse failed: {e}"}
 
     # Step 6: convert to SemanticModel and save
     model = _dict_to_model(model_dict)
@@ -203,12 +230,109 @@ async def generate_semantic_model(
 # ── HELPERS ────────────────────────────────────────────────────────────────
 
 def _parse_json(text: str) -> any:
-    """Strip markdown fences and parse JSON."""
+    """
+    Tolerant JSON parser. Handles:
+    - Markdown fences (```json ... ``` or ``` ... ```)
+    - Trailing commas before } or ]
+    - Single-line // comments
+    - Leading/trailing prose around the JSON object or array
+    """
     text = text.strip()
-    if text.startswith("```"):
-        lines = text.split("\n")
-        text  = "\n".join(lines[1:-1])
+
+    # 1. Strip markdown fences
+    text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+    text = re.sub(r"\n?```$", "", text)
+    text = text.strip()
+
+    # 2. Extract the first balanced JSON object or array (skip leading prose)
+    text = _extract_first_json(text)
+
+    # 3. Strip single-line // comments (outside strings — best-effort)
+    text = re.sub(r'(?m)//[^\n"]*$', "", text)
+
+    # 4. Remove trailing commas before } or ]
+    text = re.sub(r",\s*([}\]])", r"\1", text)
+
     return json.loads(text)
+
+
+def _extract_first_json(text: str) -> str:
+    """
+    Walk forward to find the first { or [ and return the balanced block.
+    If the text IS already clean JSON, returns it unchanged.
+    """
+    for start, open_char, close_char in [
+        (text.find("{"), "{", "}"),
+        (text.find("["), "[", "]"),
+    ]:
+        if start == -1:
+            continue
+        # Pick whichever opener comes first
+        other_start = text.find("[") if open_char == "{" else text.find("{")
+        if other_start != -1 and other_start < start:
+            continue  # the other opener is earlier; its branch will handle it
+        depth = 0
+        in_string = False
+        escape_next = False
+        for i, ch in enumerate(text[start:], start):
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == "\\" and in_string:
+                escape_next = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == open_char:
+                depth += 1
+            elif ch == close_char:
+                depth -= 1
+                if depth == 0:
+                    return text[start : i + 1]
+    return text  # unchanged if no balanced block found
+
+
+async def _assemble_per_cube(
+    schema: dict,
+    classifications: dict,
+    fk_text: str,
+    rules_text: str,
+) -> Optional[dict]:
+    """
+    Fallback: ask the LLM for ONE cube at a time, then merge results.
+    Returns a model dict compatible with _dict_to_model, or None on total failure.
+    """
+    cubes = []
+    for table_name, table_data in schema.items():
+        table_schema = format_for_llm({table_name: table_data})
+        table_cls    = json.dumps(
+            {table_name: classifications.get(table_name, {})}, indent=2
+        )
+        response = await generate(
+            SINGLE_CUBE_PROMPT.format(
+                table_name=table_name,
+                schema_context=table_schema,
+                classifications=table_cls,
+                fk_relationships=fk_text or "none detected",
+                business_rules=rules_text or "none provided",
+            ),
+            max_tokens=2048,
+        )
+        try:
+            cube_dict = _parse_json(response)
+            cubes.append(cube_dict)
+        except Exception:
+            # Skip this cube if the LLM still can't produce clean JSON
+            continue
+
+    if not cubes:
+        return None
+
+    return {"cubes": cubes, "assertions": []}
+
 
 def _dict_to_model(d: dict) -> SemanticModel:
     cubes = []

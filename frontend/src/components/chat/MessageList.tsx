@@ -29,7 +29,7 @@ export function MessageList({ messages, selectedMessageId, onSelectMessage }: Pr
   }
 
   return (
-    <div className="flex-1 overflow-auto px-4 py-4 space-y-4 [scrollbar-width:thin]">
+    <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4 [scrollbar-width:thin]">
       {messages.map((m) => (
         <Bubble
           key={m.id}

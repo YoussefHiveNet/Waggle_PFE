@@ -720,13 +720,52 @@ The 50-table schema is unchanged: HR/Org · CRM · Products · Sales · SaaS · 
 
 ## What's Next — Ordered Priority
 
-### Day 13 — polish + backlog
-- [ ] Backend cron scheduler that actually fires `refresh_schedule` (currently client-only)
+### Day 13 — PRIORITY FIX LIST (surfaced 2026-05-10/11 during Hivenet `gpt-oss-20b` demo)
+
+**✅ Done in this sweep (2026-05-13/18)**
+
+- ✅ **Dashboard artifact caching.** New `/artifacts/{id}/execute` endpoint runs stored SQL directly (no LLM, no validation pipeline). `ArtifactCard` switched to TanStack Query (`useArtifactData`) keyed per artifact id with 5-min stale time. Dashboard revisits paint instantly; no more random "card flips to error" from LLM nondeterminism. On 422 (schema drift) it falls back once to `/query` so the LLM can regenerate SQL. See `frontend/src/hooks/useArtifacts.ts:useArtifactData`, `backend/api/routes/artifacts.py:execute_artifact`.
+- ✅ **Refresh-logout regression (cookie path RFC 6265 quirk).** Refresh cookie was set with `Path=/auth/refresh` but Vite proxies requests under `/api/...`, so the browser refused to send the cookie on `/api/auth/refresh` (path-matching failed because the request path doesn't start with the cookie path). Fix: set `Path=/`. The cookie is still HttpOnly + SameSite=Lax + CORS-protected, and the marginal CSRF benefit of a narrower path was illusory anyway since the proxy broke it from day one. See `backend/api/routes/auth.py:_set_refresh_cookie`.
+- ✅ **Row-serializer duplication killed.** Two near-identical helpers (`api/routes/artifacts.py:_serialize` + `agent/tools/query_tool.py:_serialize_rows`) merged into one source of truth at `backend/util/serialize.py` (`serialize_value`, `serialize_row`, `serialize_rows`). `query_tool.py` re-exports `_serialize_rows` for backwards-compat.
+- ✅ **Dead-file cleanup.** Deleted `backend/connectors/bigquery.py` (empty stub), `backend/semantic/validator.py` (empty stub), `backend/data/connections.json` (pre-Day-11 leftover JSON store with test creds).
+- ✅ **Runtime YAMLs gitignored.** Added `backend/semantic/models/*.yaml` to `.gitignore`; `.gitkeep` preserves the directory. The two previously-committed YAML files were `git rm --cached`'d.
+- ✅ **ChatPage scroll trap.** Added `min-h-0` + independent `overflow-y-auto` to chat and artifact columns so long table results no longer push the chat input below the viewport. See `frontend/src/pages/ChatPage.tsx`, `frontend/src/components/chat/MessageList.tsx`.
+- ✅ **"Visualizations appear here" banner.** When the LLM answers without calling the `query` tool, the right pane now shows a contextual banner ("Answered from context — ask a data question to see a chart") instead of the generic placeholder. See `frontend/src/components/chat/CurrentArtifactPanel.tsx:NoQueryBanner`.
+- ✅ **Save-button double-submit.** Already guarded — `SaveArtifactDialog` disables the button while `useCreateArtifact().isPending`. Duplicates seen on dashboard came from save-during-prior-debug, not from a click race.
+
+**🔴 Critical — blocking the Monday supervisor demo**
+
+- [ ] **LLM choice / fallback chain.** `openai/gpt-oss-20b` on the Hivenet RTX 4090 (Apr 29 launch) is too weak for Waggle:
+  - Doesn't reliably emit tool-call JSON — answers "from the records currently displayed" using only sample rows from schema context instead of actually calling the `query` tool. Example: "how many classrooms in each location" → never queried, hallucinated `2 in sub-establishment 9` straight from the schema snapshot.
+  - Validation pipeline correctly flags it (30% confidence on "revenue per day"), but UX suffers.
+  - **Action:** wire the 3-tier fallback chain planned in `/Users/youssef/.claude/plans/lucky-riding-wind.md` (Hivenet primary → OpenRouter Gemma/MiniMax secondary → Groq Llama 3.3 70B tertiary). Until that lands, comment out the Hivenet block in `backend/.env` and keep Groq as primary.
+
+- [ ] **Semantic model gen — JSON parse failure on `gpt-oss-20b`.** `backend/agent/tools/semantic_tool.py:_parse_json` blew up with `Expecting value: line 160 column 20 (char 6365)` because the LLM produced malformed JSON in the assemble step (trailing comma, comment, or `max_tokens=2048` truncation mid-object). Fixes (in order of safety):
+  1. Bump `LLMConfig.max_tokens` for `semantic_tool` calls to ≥ 8192 (or move to `max_tokens=None` and rely on context window).
+  2. Add a tolerant JSON repair pass (strip ``` fences, trailing commas, comments) before `json.loads`.
+  3. If still bad, fall back to incremental "ask for ONE cube at a time" instead of the whole model in one shot.
+
+**🟢 Day 12.5 carry-overs (still applies)**
+
+- [ ] Backend cron scheduler that actually fires `refresh_schedule` (currently client-only `setInterval`)
 - [ ] Style tab: per-axis-key dropdowns derived from latest result columns
 - [ ] Anchor data paths to `Path(__file__).parent` (Day 11 carry-over)
-- [ ] Add `backend/semantic/models/*.yaml` to `.gitignore` (runtime user data)
-- [ ] Sliding-window refresh: extend cookie expiry on each authed request (currently fixed 30-day)
-- [ ] Promote `/tmp/waggle_demo_seed.sql` into `backend/scripts/seed_demo.sql` (companion to seed_hard.sql)
+- ✅ ~~Add `backend/semantic/models/*.yaml` to `.gitignore`~~ — done 2026-05-18
+- ✅ ~~Sliding-window refresh~~ — already implemented at `auth.py:_set_refresh_cookie` (cookie re-issued on every `/auth/refresh`); ACCESS_TTL=24h, REFRESH_TTL=7d (`auth/jwt.py:15`)
+- [ ] Promote `/tmp/waggle_demo_seed.sql` into `backend/scripts/seed_demo.sql` (companion to `seed_hard.sql`)
+- [ ] DB-level cached `last_data` JSONB column (Layer 3 caching) — defer until current 5-min TanStack cache proves insufficient
+
+### Day 14+ — Backlog from 2026-05-18 cleanup session
+
+**UX / product**
+- [ ] **Logging UX overhaul.** Clearer "logged in as X" indicator; visible session timer / "logs you out in N hours if inactive"; logout button discoverable on every screen; friendly "session expired" toast instead of silent redirect to `/login`.
+- [ ] **Draggable + resizable artifact tiles** in the dashboard. Use `react-grid-layout` (~12 KB gzipped, battle-tested) for grid editing; persist `layout: {x, y, w, h}` per artifact (new column on `artifacts` table). Mobile: drop into a single-column stack.
+- [ ] **Multiple dashboards per user.** New `dashboards` table (`id`, `user_id`, `name`); `artifacts.dashboard_id` FK; sidebar to switch dashboards; "create" + "rename" flows. Each dashboard owns its own layout.
+
+**Cleanup backlog (from 2026-05-18 scan, deferred)**
+- [ ] Bare `except Exception: pass` in `backend/validation/engine.py:80, 150` and `backend/connectors/postgres.py:149` — replace with specific exceptions + warning logs.
+- [ ] Hardcoded values to env: CORS origins (`api/main.py:29`), `verify=False` SSL toggle (`agent/llm.py:15`), `MAX_ATTEMPTS=3` (`agent/tools/query_tool.py`), `MAX_FILE_SIZE=100MB` (`api/routes/sources.py:34`), validation row-limit `10000` (`validation/engine.py:78`).
+- [ ] Add `pytest` test infrastructure — start with route smoke tests + one agent end-to-end on `waggle_demo`.
 
 ### M6 — BigQuery connector
 - [ ] `connectors/bigquery.py` — same interface as `postgres.py`
@@ -826,4 +865,4 @@ That project is separate from this codebase. Lessons learned:
 
 ---
 
-*Last updated: 2026-05-09 — Day 12 + Day 12.5 done. Day 12: artifact editor sheet (Query / Style / Schedule tabs) on every `ArtifactCard` with client-side poller for `refresh_schedule`; source onboarding wizard auto-opens after a new source is added (calls `POST /semantic/{id}`); new `Sheet` UI primitive (Radix Dialog right-slide). Day 12.5 (demo-driven fixes): runtime tool-call parser now extracts JSON from anywhere in the response (was leaking raw `{"tool":...}` into chat); `ACCESS_TTL` 15min→1h + `REFRESH_TTL` 7d→30d; wizard answers persist in `localStorage` so a forced re-login doesn't lose them; "Configure semantic model" entry added to each source's overflow menu; `waggle_hard` reseeded with 18 months of history (~80k+ time-series rows across orders/payments/invoices/usage/tickets/audit). All committed in `ba87215`. `pnpm tsc --noEmit` clean.*
+*Last updated: 2026-05-18 — Cleanup sweep + Day 13 partial. Shipped: dashboard artifact caching via new `/artifacts/{id}/execute` endpoint + TanStack Query (`useArtifactData`, 5-min stale, 422 fallback to `/query`); refresh-logout fixed (cookie path `/auth/refresh` → `/` so Vite-proxied `/api/auth/refresh` requests actually carry the cookie); row-serializer unified into `backend/util/serialize.py`; 3 dead files deleted (`connectors/bigquery.py`, `semantic/validator.py`, `data/connections.json`); runtime YAMLs gitignored; ChatPage independent scroll columns (no more chat-input pushed below viewport on long tables); `CurrentArtifactPanel` shows contextual `NoQueryBanner` when the LLM answers without calling `query`. Auth: `ACCESS_TTL=24h`, `REFRESH_TTL=7d` sliding. Backend on Mistral-Small-24B-Instruct-2501 via Hivenet 4× RTX 4090 (`mistralai/Mistral-Small-24B-Instruct-2501`). `pnpm tsc --noEmit` clean. Still open Day 13: LLM fallback chain, semantic-model JSON parse repair, backend cron. Day 14+ asks logged: logging UX overhaul, draggable/resizable artifact grid (`react-grid-layout`), multiple-dashboards-per-user.*

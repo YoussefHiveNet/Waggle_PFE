@@ -18,9 +18,6 @@ Why accumulate errors across attempts:
   The LLM sees what it tried and why it failed — same as a human debugging
   at a REPL. Without this it tends to regenerate the same broken SQL.
 """
-import decimal
-import datetime
-import uuid
 import sqlglot
 from typing import Optional
 
@@ -28,6 +25,8 @@ from agent.llm import generate
 from agent.tools.schema_tool import get_schema, format_for_llm
 from connectors.postgres import fetch_with_config as _pg_fetch
 from connectors.duckdb import fetch_with_config as _duck_fetch
+# Re-exported for backwards compatibility — old callers used _serialize_rows
+from util.serialize import serialize_rows as _serialize_rows  # noqa: F401
 from connectors.store import get_source
 from semantic.engine import SemanticEngine
 from semantic.models import SemanticModel, Cube
@@ -192,26 +191,7 @@ def _clean_sql(text: str) -> str:
     return text.strip().rstrip(";")
 
 
-def _serialize_rows(rows: list[dict]) -> list[dict]:
-    """
-    Make asyncpg rows JSON-safe.
-    asyncpg returns Decimal for NUMERIC, date/datetime for temporal columns,
-    and UUID objects — none of which FastAPI's JSON encoder handles by default.
-    """
-    result = []
-    for row in rows:
-        clean = {}
-        for k, v in row.items():
-            if isinstance(v, decimal.Decimal):
-                clean[k] = float(v)
-            elif isinstance(v, (datetime.date, datetime.datetime)):
-                clean[k] = v.isoformat()
-            elif isinstance(v, uuid.UUID):
-                clean[k] = str(v)
-            else:
-                clean[k] = v
-        result.append(clean)
-    return result
+# _serialize_rows is imported from util.serialize at the top of this file.
 
 
 def _empty_model() -> SemanticModel:

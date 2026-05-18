@@ -1,12 +1,20 @@
 # api/routes/artifacts.py
 from __future__ import annotations
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from auth.jwt import get_current_user
-from auth.db import create_artifact, list_artifacts, get_artifact, update_artifact, delete_artifact
+from auth.db import (
+    create_artifact, list_artifacts, get_artifact, update_artifact,
+    delete_artifact, touch_artifact_last_refreshed,
+)
+from connectors.store import get_source_for_user
+from connectors.postgres import fetch_with_config as _pg_fetch
+from connectors.duckdb import fetch_with_config as _duck_fetch
+from util.serialize import serialize_row, serialize_rows
 
 router = APIRouter(prefix="/artifacts", tags=["artifacts"])
 
@@ -31,17 +39,9 @@ class ArtifactUpdate(BaseModel):
     refresh_schedule: Optional[str]  = None
 
 
-def _serialize(row: dict) -> dict:
-    """Convert UUID and datetime fields to JSON-safe strings."""
-    result = {}
-    for k, v in row.items():
-        if hasattr(v, "isoformat"):
-            result[k] = v.isoformat()
-        elif hasattr(v, "__str__") and type(v).__name__ in ("UUID",):
-            result[k] = str(v)
-        else:
-            result[k] = v
-    return result
+# Row serialization lives in util.serialize — single source of truth for
+# converting asyncpg rows (Decimal, date, UUID, …) to JSON-safe dicts.
+_serialize = serialize_row
 
 
 # ── ENDPOINTS ─────────────────────────────────────────────────────────────────
@@ -98,3 +98,35 @@ async def remove_artifact(artifact_id: str, user_id: str = Depends(get_current_u
     ok = await delete_artifact(artifact_id, user_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Artifact not found")
+
+
+@router.post("/{artifact_id}/execute")
+async def execute_artifact(
+    artifact_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    """
+    Run the artifact's stored SQL directly — no LLM, no validation pipeline.
+    On failure (schema drift, bad SQL) returns 422 so the frontend can fall
+    back to /query/{connection_id}, which regenerates the SQL via the LLM.
+    """
+    art = await get_artifact(artifact_id, user_id)
+    if not art:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    src = await get_source_for_user(art["connection_id"], user_id)
+    if not src:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    fetch_fn = _pg_fetch if src["source_type"] == "postgres" else _duck_fetch
+    try:
+        rows = await fetch_fn(src["config"], art["sql"])
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"SQL execution failed: {e}")
+
+    rows = serialize_rows(rows)
+    await touch_artifact_last_refreshed(artifact_id, user_id)
+    return {
+        "data": rows,
+        "row_count": len(rows),
+        "last_refreshed": datetime.now(timezone.utc).isoformat(),
+    }

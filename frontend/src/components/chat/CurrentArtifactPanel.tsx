@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { BookmarkPlus, ChevronDown } from "lucide-react";
+import { BookmarkPlus, ChevronDown, MessageSquareText } from "lucide-react";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -14,9 +14,13 @@ interface Props {
   result: QueryToolResult | null;
   question: string;
   connectionId: string;
+  /** Last assistant turn answered without calling the query tool. */
+  hasAnswerWithoutQuery?: boolean;
 }
 
-export function CurrentArtifactPanel({ result, question, connectionId }: Props) {
+export function CurrentArtifactPanel({
+  result, question, connectionId, hasAnswerWithoutQuery = false,
+}: Props) {
   const [type, setType] = useState<ArtifactType>("table");
   const [showSql, setShowSql] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
@@ -32,7 +36,7 @@ export function CurrentArtifactPanel({ result, question, connectionId }: Props) 
   }, [inferred, result?.sql]);
 
   if (!result) {
-    return <EmptyPanel />;
+    return hasAnswerWithoutQuery ? <NoQueryBanner /> : <EmptyPanel />;
   }
 
   return (
@@ -110,6 +114,24 @@ function EmptyPanel() {
         <div className="text-xs text-[var(--color-muted-foreground)]/80 max-w-xs">
           Ask a question on the left. When the answer comes back, you'll see the
           data here, ready to save to your dashboard.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NoQueryBanner() {
+  return (
+    <div className="flex h-full items-center justify-center px-6 text-center">
+      <div className="max-w-sm">
+        <MessageSquareText className="h-6 w-6 mx-auto mb-3 text-[var(--color-muted-foreground)]" />
+        <div className="text-sm font-medium text-[var(--color-foreground)] mb-2">
+          Answered from context
+        </div>
+        <div className="text-xs text-[var(--color-muted-foreground)]/90">
+          The assistant replied without running a database query, so there's
+          nothing to visualize here. Ask a data question — e.g. "how many…",
+          "total…", "by month" — to see a chart or table.
         </div>
       </div>
     </div>

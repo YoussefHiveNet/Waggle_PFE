@@ -225,6 +225,16 @@ async def delete_artifact(artifact_id: str, user_id: str) -> bool:
         return result == "DELETE 1"
 
 
+async def touch_artifact_last_refreshed(artifact_id: str, user_id: str) -> None:
+    pool = await get_app_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE waggle_app.artifacts SET last_refreshed = NOW() "
+            "WHERE id = $1 AND user_id = $2",
+            artifact_id, user_id
+        )
+
+
 # ── SOURCE HELPERS ────────────────────────────────────────────────────────────
 
 async def create_source(

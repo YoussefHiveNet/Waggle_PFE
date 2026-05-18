@@ -11,18 +11,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { ArtifactRenderer } from "@/components/artifacts/ArtifactRenderer";
 import { ArtifactEditorSheet } from "@/components/artifacts/ArtifactEditorSheet";
-import { useDeleteArtifact } from "@/hooks/useArtifacts";
-import { queryService, extractError } from "@/lib/api";
-import type { Artifact, QueryToolResult, Row, ToolCall } from "@/types";
+import { useDeleteArtifact, useArtifactData } from "@/hooks/useArtifacts";
+import { extractError } from "@/lib/api";
+import type { Artifact } from "@/types";
 
 interface Props {
   artifact: Artifact;
-}
-
-interface Status {
-  rows: Row[] | null;
-  loading: boolean;
-  error: string | null;
 }
 
 // `every:Ns` → milliseconds; null/empty/invalid → null (no polling).
@@ -36,51 +30,33 @@ function parseScheduleMs(schedule: string | null): number | null {
 }
 
 /**
- * Refreshes the artifact's data by re-running its underlying question through
- * /query. Going through /query keeps the validation pipeline in the loop
- * (rather than executing raw stored SQL), which protects against schema drift.
+ * Loads artifact data via the cached useArtifactData hook:
+ *   - /artifacts/{id}/execute    (deterministic, raw SQL, no LLM) — primary
+ *   - /query/{connection_id}     (LLM-regenerated) — fallback on 422
+ * Cached for 5 min per artifact id so dashboard revisits paint instantly.
  */
 export function ArtifactCard({ artifact }: Props) {
   const navigate = useNavigate();
   const del = useDeleteArtifact();
-  const [status, setStatus] = useState<Status>({ rows: null, loading: true, error: null });
   const [editorOpen, setEditorOpen] = useState(false);
 
-  async function refresh() {
-    setStatus({ rows: null, loading: true, error: null });
-    try {
-      const res = await queryService.run(artifact.connection_id, {
-        question: artifact.question,
-      });
-      const tc: ToolCall | undefined = res.tool_calls[0];
-      if (tc?.tool === "query" && !("error" in tc.result)) {
-        const r = tc.result as QueryToolResult;
-        setStatus({ rows: r.data, loading: false, error: null });
-      } else {
-        setStatus({ rows: null, loading: false, error: "No data returned" });
-      }
-    } catch (err) {
-      setStatus({ rows: null, loading: false, error: extractError(err) });
-    }
-  }
-
-  useEffect(() => {
-    refresh();
-  }, [artifact.id, artifact.question]);
+  const { data, isLoading, error, refetch } = useArtifactData(artifact);
 
   // Frontend poller — fires while the dashboard tab is open. No backend cron.
   useEffect(() => {
     const ms = parseScheduleMs(artifact.refresh_schedule);
     if (!ms) return;
-    const handle = window.setInterval(refresh, ms);
+    const handle = window.setInterval(() => { refetch(); }, ms);
     return () => window.clearInterval(handle);
-  }, [artifact.id, artifact.refresh_schedule]);
+  }, [artifact.id, artifact.refresh_schedule, refetch]);
 
   function handleDelete() {
     if (window.confirm(`Delete "${artifact.name}"?`)) del.mutate(artifact.id);
   }
 
   const scheduleMs = parseScheduleMs(artifact.refresh_schedule);
+  const rows = data?.data ?? null;
+  const errorMsg = error ? extractError(error) : null;
 
   return (
     <>
@@ -110,7 +86,7 @@ export function ArtifactCard({ artifact }: Props) {
                 <DropdownMenuItem onSelect={() => navigate(`/chat/${artifact.connection_id}`)}>
                   <MessageSquare className="h-3.5 w-3.5" /> Open chat
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={refresh}>
+                <DropdownMenuItem onSelect={() => refetch()}>
                   <RefreshCw className="h-3.5 w-3.5" /> Refresh
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
@@ -123,19 +99,19 @@ export function ArtifactCard({ artifact }: Props) {
         </div>
 
         <div className="flex-1 px-4 pb-4 min-h-[180px] h-[240px]">
-          {status.loading ? (
+          {isLoading ? (
             <Skeleton className="h-full w-full" />
-          ) : status.error ? (
-            <ErrorBox message={status.error} onRetry={refresh} />
-          ) : status.rows && status.rows.length > 0 ? (
+          ) : errorMsg ? (
+            <ErrorBox message={errorMsg} onRetry={() => refetch()} />
+          ) : rows && rows.length > 0 ? (
             <ArtifactRenderer
               type={artifact.artifact_type}
-              data={status.rows}
+              data={rows}
               styleConfig={artifact.style_config}
               name={artifact.name}
             />
           ) : (
-            <ErrorBox message="No rows returned" onRetry={refresh} />
+            <ErrorBox message="No rows returned" onRetry={() => refetch()} />
           )}
         </div>
       </div>
