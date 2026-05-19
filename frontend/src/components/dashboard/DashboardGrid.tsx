@@ -26,7 +26,7 @@ export function DashboardGrid({ selectedSource }: Props) {
   const { data: artifacts = [], isLoading } = useArtifacts(
     activeDashboardId === "__default__" ? "__default__" : activeDashboardId
   );
-  const updateLayout = useUpdateLayout();
+  const { mutate: saveLayout } = useUpdateLayout();
   const createDashboard = useCreateDashboard();
   const renameDashboard = useRenameDashboard();
   const deleteDashboard = useDeleteDashboard();
@@ -42,7 +42,11 @@ export function DashboardGrid({ selectedSource }: Props) {
   const filteredRef = useRef(filtered);
   filteredRef.current = filtered;
 
-  // Debounce layout saves — uses filteredRef so handleLayoutChange is stable
+  // Debounce layout saves.
+  // saveLayout (= useMutation.mutate) is stable across renders — guaranteed by
+  // TanStack Query. This makes handleLayoutChange stable too, so the debounce
+  // timer is only cleared when the user actually moves/resizes, not on every
+  // unrelated re-render.
   const layoutTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleLayoutChange = useCallback((layouts: Layout) => {
     if (layoutTimer.current) clearTimeout(layoutTimer.current);
@@ -55,11 +59,11 @@ export function DashboardGrid({ selectedSource }: Props) {
           art.layout.x !== newLayout.x || art.layout.y !== newLayout.y ||
           art.layout.w !== newLayout.w || art.layout.h !== newLayout.h
         ) {
-          updateLayout.mutate({ id: l.i, layout: newLayout });
+          saveLayout({ id: l.i, layout: newLayout });
         }
       });
     }, 800);
-  }, [updateLayout]);
+  }, [saveLayout]);
 
   const [containerWidth, setContainerWidth] = useState(0);
   // Use a state ref so the effect re-fires when the element actually mounts
