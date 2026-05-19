@@ -19,7 +19,8 @@ def get_client() -> AsyncOpenAI:
 async def generate(
     prompt: str,
     system: str = "",
-    messages: Optional[list[dict]] = None
+    messages: Optional[list[dict]] = None,
+    max_tokens: Optional[int] = None,
 ) -> str:
     """
     Call the LLM.
@@ -42,7 +43,7 @@ async def generate(
         model=LLMConfig.model,
         messages=full_messages,
         temperature=LLMConfig.temperature,
-        max_tokens=LLMConfig.max_tokens,
+        max_tokens=max_tokens or LLMConfig.max_tokens,
     )
     return response.choices[0].message.content
 
