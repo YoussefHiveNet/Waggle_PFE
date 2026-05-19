@@ -17,6 +17,8 @@ import type { Artifact } from "@/types";
 
 interface Props {
   artifact: Artifact;
+  span?: 1 | 2 | 3;
+  onSpanChange?: (span: 1 | 2 | 3) => void;
 }
 
 // `every:Ns` → milliseconds; null/empty/invalid → null (no polling).
@@ -35,7 +37,7 @@ function parseScheduleMs(schedule: string | null): number | null {
  *   - /query/{connection_id}     (LLM-regenerated) — fallback on 422
  * Cached for 5 min per artifact id so dashboard revisits paint instantly.
  */
-export function ArtifactCard({ artifact }: Props) {
+export function ArtifactCard({ artifact, span = 1, onSpanChange }: Props) {
   const navigate = useNavigate();
   const del = useDeleteArtifact();
   const [editorOpen, setEditorOpen] = useState(false);
@@ -71,6 +73,23 @@ export function ArtifactCard({ artifact }: Props) {
           <div className="flex items-center gap-1">
             {scheduleMs && (
               <Clock className="h-3.5 w-3.5 text-[var(--color-muted-foreground)]" />
+            )}
+            {/* Column-span selector — visible on hover */}
+            {onSpanChange && (
+              <div className="hidden sm:flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity mr-1">
+                {([1, 2, 3] as const).map((s) => (
+                  <button
+                    key={s}
+                    title={`${s} column${s > 1 ? "s" : ""}`}
+                    onClick={(e) => { e.stopPropagation(); onSpanChange(s); }}
+                    className={`flex gap-[2px] items-center p-1 rounded transition-colors hover:bg-[var(--color-muted)] ${span === s ? "text-[var(--color-primary)]" : "text-[var(--color-muted-foreground)]"}`}
+                  >
+                    {Array.from({ length: s }).map((_, i) => (
+                      <div key={i} className="w-[5px] h-3 rounded-[2px] bg-current" />
+                    ))}
+                  </button>
+                ))}
+              </div>
             )}
             <Badge variant="secondary" className="capitalize">{artifact.artifact_type}</Badge>
             <DropdownMenu>

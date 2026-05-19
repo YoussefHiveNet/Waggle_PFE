@@ -1,8 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { MessageSquarePlus, Plus, MoreHorizontal, Pencil, Trash2, Sparkles } from "lucide-react";
-import ReactGridLayout, { type LayoutItem, type Layout, horizontalCompactor } from "react-grid-layout";
-import "react-grid-layout/css/styles.css";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -18,6 +16,16 @@ interface Props {
   selectedSource: Source | null;
 }
 
+// Map stored w value → column span (1–3).
+// Old RGL values used 12-col scale; new values are 1/2/3 directly.
+function toSpan(w: number | undefined): 1 | 2 | 3 {
+  if (!w || w <= 1) return 1;
+  if (w === 2) return 1;   // old RGL default w:2 → 1 col in 3-col grid
+  if (w <= 4) return 1;
+  if (w <= 8) return 2;
+  return 3;
+}
+
 export function DashboardGrid({ selectedSource }: Props) {
   const connectionId = selectedSource?.connection_id;
   const [activeDashboardId, setActiveDashboardId] = useState<string | "__default__">("__default__");
@@ -31,80 +39,15 @@ export function DashboardGrid({ selectedSource }: Props) {
   const renameDashboard = useRenameDashboard();
   const deleteDashboard = useDeleteDashboard();
 
-  // Reset to default tab when source changes
   useEffect(() => { setActiveDashboardId("__default__"); }, [connectionId]);
 
   const filtered: Artifact[] = connectionId
     ? artifacts.filter((a) => a.connection_id === connectionId)
     : artifacts;
 
-  // Always-current ref so the debounce timer never closes over stale data
-  const filteredRef = useRef(filtered);
-  filteredRef.current = filtered;
-
-  // Debounce layout saves.
-  // saveLayout (= useMutation.mutate) is stable across renders — guaranteed by
-  // TanStack Query. This makes handleLayoutChange stable too, so the debounce
-  // timer is only cleared when the user actually moves/resizes, not on every
-  // unrelated re-render.
-  const layoutTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleLayoutChange = useCallback((layouts: Layout) => {
-    if (layoutTimer.current) clearTimeout(layoutTimer.current);
-    layoutTimer.current = setTimeout(() => {
-      layouts.forEach((l: LayoutItem) => {
-        const art = filteredRef.current.find((a) => a.id === l.i);
-        if (!art) return;
-        const newLayout = { x: l.x, y: l.y, w: l.w, h: l.h };
-        if (
-          art.layout.x !== newLayout.x || art.layout.y !== newLayout.y ||
-          art.layout.w !== newLayout.w || art.layout.h !== newLayout.h
-        ) {
-          saveLayout({ id: l.i, layout: newLayout });
-        }
-      });
-    }, 800);
-  }, [saveLayout]);
-
-  const [containerWidth, setContainerWidth] = useState(0);
-  // Use a state ref so the effect re-fires when the element actually mounts
-  // (the div only renders after data loads, so a deps=[] effect misses it)
-  const [containerEl, setContainerEl] = useState<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!containerEl) return;
-    const ro = new ResizeObserver(([entry]) => setContainerWidth(entry.contentRect.width));
-    ro.observe(containerEl);
-    return () => ro.disconnect();
-  }, [containerEl]);
-
-  const isMobile = containerWidth > 0 && containerWidth < 768;
-
-  // Memoized so RGL never gets a new layout object reference on re-renders
-  // that don't change actual data (prevents position snapping on refetches).
-  // Auto-distributes items across columns when all are at the default x:0,y:0.
-  const rglLayout = useMemo(() => {
-    const cols = isMobile ? 1 : 12;
-    const items = filtered.map((a) => ({
-      i: a.id,
-      x: a.layout?.x ?? 0,
-      y: a.layout?.y ?? 0,
-      w: isMobile ? 1 : (a.layout?.w ?? 2),
-      h: a.layout?.h ?? 3,
-      minW: 1,
-      minH: 2,
-    }));
-    const allDefault = items.length > 1 && items.every((it) => it.x === 0 && it.y === 0);
-    if (allDefault) {
-      let col = 0, row = 0, rowH = 0;
-      return items.map((it) => {
-        if (col + it.w > cols) { col = 0; row += rowH; rowH = 0; }
-        const result = { ...it, x: col, y: row };
-        col += it.w;
-        rowH = Math.max(rowH, it.h);
-        return result;
-      });
-    }
-    return items;
-  }, [filtered, isMobile]);
+  function handleSpanChange(artifact: Artifact, span: 1 | 2 | 3) {
+    saveLayout({ id: artifact.id, layout: { x: 0, y: 0, w: span, h: artifact.layout?.h ?? 3 } });
+  }
 
   function handleCreateDashboard() {
     if (!connectionId) return;
@@ -182,25 +125,23 @@ export function DashboardGrid({ selectedSource }: Props) {
       ) : filtered.length === 0 ? (
         <EmptyState selectedSource={selectedSource} />
       ) : (
-        <div ref={setContainerEl} className="flex-1 min-h-0">
-          {containerWidth > 0 && (
-            <ReactGridLayout
-              className="layout"
-              layout={rglLayout}
-              gridConfig={{ cols: isMobile ? 1 : 12, rowHeight: 80, margin: [16, 16] }}
-              width={containerWidth}
-              dragConfig={{ enabled: !isMobile, handle: ".drag-handle", bounded: false, threshold: 3 }}
-              resizeConfig={{ enabled: !isMobile, handles: ["se"] }}
-              compactor={horizontalCompactor}
-              onLayoutChange={handleLayoutChange}
-            >
-              {filtered.map((a) => (
-                <div key={a.id}>
-                  <ArtifactCard artifact={a} />
-                </div>
-              ))}
-            </ReactGridLayout>
-          )}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 auto-rows-[300px]">
+          {filtered.map((a) => {
+            const span = toSpan(a.layout?.w);
+            return (
+              <div
+                key={a.id}
+                style={{ gridColumn: `span ${span}` }}
+                className="min-w-0"
+              >
+                <ArtifactCard
+                  artifact={a}
+                  span={span}
+                  onSpanChange={(s) => handleSpanChange(a, s)}
+                />
+              </div>
+            );
+          })}
         </div>
       )}
     </main>
