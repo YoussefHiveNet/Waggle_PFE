@@ -718,6 +718,27 @@ The 50-table schema is unchanged: HR/Org · CRM · Products · Sales · SaaS · 
 
 ---
 
+### Day 13 (big-day) + Day 14 polish ✅
+
+**Committed in big-day session (commit `4320e07`):**
+- **Multiple dashboards per source** — `waggle_app.dashboards` table, `/dashboards` CRUD routes, tab bar in `DashboardGrid`, dashboard picker in `SaveArtifactDialog`, `useDashboards` hooks
+- **Draggable + resizable tiles** — `react-grid-layout` v2, `layout JSONB` column on `artifacts`, debounced PATCH save via `useUpdateLayout`, drag handle on card header
+- **Production-safe data paths** — `DataPaths` class in `config.py` anchored to `Path(__file__).resolve().parent`; all five relative-path locations replaced
+- **Semantic model parse hardening** — unicode/BOM strip, graceful `{"status":"error"}` fallback instead of HTTP 500 from `_assemble_per_cube`
+- **Responsive/mobile audit** — `hidden md:flex` sidebar with Sheet drawer, ChatPage mobile tab toggle (Chat | Result), `shrink-0` on `ChatInput`, `h-[100dvh]`
+
+**Fixed in polish pass (commit `ff3544e`):**
+- **ResizeObserver timing** — state-based ref (`useState<HTMLDivElement|null>` + `ref={setContainerEl}`) so observer fires after the conditional div actually mounts
+- **Layout save closure staling** — `filteredRef = useRef(filtered)` pattern; `handleLayoutChange` has only `[updateLayout]` dep so it's stable and the 800ms timer always reads current data
+- **rglLayout identity churn** — IIFE replaced with `useMemo([filtered, isMobile])`; RGL no longer receives a new layout prop object on every render/refetch
+- **Horizontal gap fill** — `verticalCompactor` → `horizontalCompactor`; cards slide left when adjacent card shrinks
+- **Selected source resets on refresh** — `localStorage.getItem/setItem("waggle.selectedSource")` in `DashboardPage`
+- **Chat page not full-screen** — `DashboardLayout` `min-h-[100dvh]` → `h-[100dvh]`; `ChatPage` removes duplicate `h-[100dvh]`; message list scrolls internally, input always visible
+- **Layout cache snap** — `useUpdateLayout.onSuccess` uses `setQueriesData` (no refetch) to patch list cache in-place
+- **Code quality** — `import json` moved to module top in `auth/db.py`; `DELETE` return check uses `startsWith`; explicit HTTP 400 for unsupported source types in `execute_artifact`; defensive queryFn guard in `useDashboards`; safer `extractError` with `filter(Boolean)`; try/catch in `SaveArtifactDialog`
+
+---
+
 ## What's Next — Ordered Priority
 
 ### Day 13 — PRIORITY FIX LIST (surfaced 2026-05-10/11 during Hivenet `gpt-oss-20b` demo)
@@ -865,4 +886,4 @@ That project is separate from this codebase. Lessons learned:
 
 ---
 
-*Last updated: 2026-05-18 — Cleanup sweep + Day 13 partial. Shipped: dashboard artifact caching via new `/artifacts/{id}/execute` endpoint + TanStack Query (`useArtifactData`, 5-min stale, 422 fallback to `/query`); refresh-logout fixed (cookie path `/auth/refresh` → `/` so Vite-proxied `/api/auth/refresh` requests actually carry the cookie); row-serializer unified into `backend/util/serialize.py`; 3 dead files deleted (`connectors/bigquery.py`, `semantic/validator.py`, `data/connections.json`); runtime YAMLs gitignored; ChatPage independent scroll columns (no more chat-input pushed below viewport on long tables); `CurrentArtifactPanel` shows contextual `NoQueryBanner` when the LLM answers without calling `query`. Auth: `ACCESS_TTL=24h`, `REFRESH_TTL=7d` sliding. Backend on Mistral-Small-24B-Instruct-2501 via Hivenet 4× RTX 4090 (`mistralai/Mistral-Small-24B-Instruct-2501`). `pnpm tsc --noEmit` clean. Still open Day 13: LLM fallback chain, semantic-model JSON parse repair, backend cron. Day 14+ asks logged: logging UX overhaul, draggable/resizable artifact grid (`react-grid-layout`), multiple-dashboards-per-user.*
+*Last updated: 2026-05-19 — Day 13 big-day + Day 14 polish complete. Shipped: multiple dashboards per source (tab bar, CRUD, SaveArtifactDialog picker); draggable/resizable artifact tiles (react-grid-layout v2, layout JSONB, debounced PATCH); production-safe data paths (DataPaths class); semantic parse hardening; responsive/mobile audit. Polish: ResizeObserver timing fix; layout closure staling fixed (filteredRef pattern); rglLayout memoized; horizontalCompactor (no gaps on resize); selected source persisted in localStorage; chat page h-[100dvh] chain fixed (message list scrolls internally); setQueriesData cache patch (no layout snap); code quality sweep (import json, DELETE check, unsupported source type 400, extractError, SaveArtifactDialog try/catch). `pnpm tsc --noEmit` clean. Open: LLM fallback chain, backend cron for refresh_schedule, BigQuery connector.*
