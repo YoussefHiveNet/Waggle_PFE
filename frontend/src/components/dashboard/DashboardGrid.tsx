@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { MessageSquarePlus, Plus, MoreHorizontal, Pencil, Trash2, Sparkles } from "lucide-react";
-import ReactGridLayout, { type LayoutItem, type Layout } from "react-grid-layout";
+import ReactGridLayout, { type LayoutItem, type Layout, horizontalCompactor } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
-import "react-resizable/css/styles.css";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -39,13 +38,17 @@ export function DashboardGrid({ selectedSource }: Props) {
     ? artifacts.filter((a) => a.connection_id === connectionId)
     : artifacts;
 
-  // Debounce layout saves
+  // Always-current ref so the debounce timer never closes over stale data
+  const filteredRef = useRef(filtered);
+  filteredRef.current = filtered;
+
+  // Debounce layout saves — uses filteredRef so handleLayoutChange is stable
   const layoutTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleLayoutChange = useCallback((layouts: Layout) => {
     if (layoutTimer.current) clearTimeout(layoutTimer.current);
     layoutTimer.current = setTimeout(() => {
       layouts.forEach((l: LayoutItem) => {
-        const art = filtered.find((a) => a.id === l.i);
+        const art = filteredRef.current.find((a) => a.id === l.i);
         if (!art) return;
         const newLayout = { x: l.x, y: l.y, w: l.w, h: l.h };
         if (
@@ -56,18 +59,48 @@ export function DashboardGrid({ selectedSource }: Props) {
         }
       });
     }, 800);
-  }, [filtered, updateLayout]);
+  }, [updateLayout]);
 
   const [containerWidth, setContainerWidth] = useState(0);
-  const containerRef = useRef<HTMLDivElement>(null);
+  // Use a state ref so the effect re-fires when the element actually mounts
+  // (the div only renders after data loads, so a deps=[] effect misses it)
+  const [containerEl, setContainerEl] = useState<HTMLDivElement | null>(null);
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerEl) return;
     const ro = new ResizeObserver(([entry]) => setContainerWidth(entry.contentRect.width));
-    ro.observe(containerRef.current);
+    ro.observe(containerEl);
     return () => ro.disconnect();
-  }, []);
+  }, [containerEl]);
 
   const isMobile = containerWidth > 0 && containerWidth < 768;
+
+  // Memoized so RGL never gets a new layout object reference on re-renders
+  // that don't change actual data (prevents position snapping on refetches).
+  // Auto-distributes items across columns when all are at the default x:0,y:0.
+  const rglLayout = useMemo(() => {
+    const cols = isMobile ? 1 : 12;
+    const items = filtered.map((a) => ({
+      i: a.id,
+      x: a.layout?.x ?? 0,
+      y: a.layout?.y ?? 0,
+      w: isMobile ? 1 : (a.layout?.w ?? 2),
+      h: a.layout?.h ?? 3,
+      minW: 1,
+      minH: 2,
+    }));
+    const allDefault = items.length > 1 && items.every((it) => it.x === 0 && it.y === 0);
+    if (allDefault) {
+      let col = 0, row = 0, rowH = 0;
+      return items.map((it) => {
+        if (col + it.w > cols) { col = 0; row += rowH; rowH = 0; }
+        const result = { ...it, x: col, y: row };
+        col += it.w;
+        rowH = Math.max(rowH, it.h);
+        return result;
+      });
+    }
+    return items;
+  }, [filtered, isMobile]);
 
   function handleCreateDashboard() {
     if (!connectionId) return;
@@ -145,23 +178,16 @@ export function DashboardGrid({ selectedSource }: Props) {
       ) : filtered.length === 0 ? (
         <EmptyState selectedSource={selectedSource} />
       ) : (
-        <div ref={containerRef} className="flex-1 min-h-0">
+        <div ref={setContainerEl} className="flex-1 min-h-0">
           {containerWidth > 0 && (
             <ReactGridLayout
               className="layout"
-              layout={filtered.map((a) => ({
-                i: a.id,
-                x: a.layout?.x ?? 0,
-                y: a.layout?.y ?? 0,
-                w: isMobile ? 1 : (a.layout?.w ?? 2),
-                h: a.layout?.h ?? 3,
-                minW: 1,
-                minH: 2,
-              }))}
+              layout={rglLayout}
               gridConfig={{ cols: isMobile ? 1 : 12, rowHeight: 80, margin: [16, 16] }}
               width={containerWidth}
               dragConfig={{ enabled: !isMobile, handle: ".drag-handle", bounded: false, threshold: 3 }}
               resizeConfig={{ enabled: !isMobile, handles: ["se"] }}
+              compactor={horizontalCompactor}
               onLayoutChange={handleLayoutChange}
             >
               {filtered.map((a) => (

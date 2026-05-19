@@ -8,14 +8,22 @@ import { Button } from "@/components/ui/button";
 
 export function DashboardPage() {
   const { data: sources } = useSources();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    () => localStorage.getItem("waggle.selectedSource")
+  );
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     if (!sources) return;
-    if (sources.length === 0) { setSelectedId(null); return; }
+    if (sources.length === 0) {
+      setSelectedId(null);
+      localStorage.removeItem("waggle.selectedSource");
+      return;
+    }
     if (!selectedId || !sources.some((s) => s.connection_id === selectedId)) {
-      setSelectedId(sources[0].connection_id);
+      const id = sources[0].connection_id;
+      setSelectedId(id);
+      localStorage.setItem("waggle.selectedSource", id);
     }
   }, [sources, selectedId]);
 
@@ -23,6 +31,7 @@ export function DashboardPage() {
 
   function handleSelect(id: string) {
     setSelectedId(id);
+    localStorage.setItem("waggle.selectedSource", id);
     setSidebarOpen(false);
   }
 

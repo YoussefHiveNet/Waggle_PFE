@@ -24,7 +24,7 @@ export function DashboardLayout() {
   }
 
   return (
-    <div className="min-h-[100dvh] flex flex-col bg-[var(--color-background)]">
+    <div className="h-[100dvh] flex flex-col bg-[var(--color-background)]">
       {/* Top bar */}
       <header className="h-14 border-b border-[var(--color-border)] bg-[var(--color-card)] flex items-center justify-between px-6 shrink-0">
         <WaggleLogo />

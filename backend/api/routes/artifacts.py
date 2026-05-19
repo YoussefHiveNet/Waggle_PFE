@@ -124,7 +124,12 @@ async def execute_artifact(
     if not src:
         raise HTTPException(status_code=404, detail="Source not found")
 
-    fetch_fn = _pg_fetch if src["source_type"] == "postgres" else _duck_fetch
+    if src["source_type"] == "postgres":
+        fetch_fn = _pg_fetch
+    elif src["source_type"] == "duckdb":
+        fetch_fn = _duck_fetch
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported source type: {src['source_type']}")
     try:
         rows = await fetch_fn(src["config"], art["sql"])
     except Exception as e:

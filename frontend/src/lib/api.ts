@@ -72,7 +72,7 @@ export function extractError(err: unknown): string {
   if (axios.isAxiosError(err)) {
     const detail = err.response?.data?.detail;
     if (typeof detail === "string") return detail;
-    if (Array.isArray(detail)) return detail.map((d) => d.msg).join(", ");
+    if (Array.isArray(detail)) return detail.map((d: { msg?: string }) => d?.msg).filter(Boolean).join(", ");
   }
   return "Something went wrong";
 }

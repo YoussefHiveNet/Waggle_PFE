@@ -69,6 +69,12 @@ export function useUpdateLayout() {
       artifactService.update(id, { layout }),
     onSuccess: (updated: Artifact) => {
       qc.setQueryData(["artifacts", updated.id], updated);
+      // Patch the layout in every list cache directly — never refetch, so
+      // RGL never gets a stale layout prop that would snap the card back.
+      qc.setQueriesData<Artifact[]>(
+        { queryKey: ["artifacts"], exact: false },
+        (old) => old?.map((a) => (a.id === updated.id ? { ...a, layout: updated.layout } : a))
+      );
     },
   });
 }

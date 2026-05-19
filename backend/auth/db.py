@@ -7,6 +7,7 @@ All tables are created on startup via init_db(). No migration framework needed f
 """
 from __future__ import annotations
 import asyncpg
+import json
 from config import DBConfig
 
 
@@ -173,7 +174,7 @@ async def create_artifact(
     sql: str, artifact_type: str, style_config: dict, refresh_schedule: str,
     dashboard_id: str | None = None,
 ) -> dict:
-    import json
+
     pool = await get_app_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -222,7 +223,7 @@ async def get_artifact(artifact_id: str, user_id: str) -> dict | None:
 
 
 async def update_artifact(artifact_id: str, user_id: str, **fields) -> dict | None:
-    import json
+
     allowed = {"name", "question", "sql", "artifact_type", "style_config", "refresh_schedule", "dashboard_id", "layout"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -259,7 +260,7 @@ async def delete_artifact(artifact_id: str, user_id: str) -> bool:
             "DELETE FROM waggle_app.artifacts WHERE id = $1 AND user_id = $2",
             artifact_id, user_id
         )
-        return result == "DELETE 1"
+        return bool(result and result.startswith("DELETE") and result != "DELETE 0")
 
 
 async def touch_artifact_last_refreshed(artifact_id: str, user_id: str) -> None:
@@ -277,7 +278,7 @@ async def touch_artifact_last_refreshed(artifact_id: str, user_id: str) -> None:
 async def create_source(
     user_id: str, label: str, source_type: str, config: dict
 ) -> dict:
-    import json
+
     pool = await get_app_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -344,7 +345,7 @@ async def delete_source(source_id: str, user_id: str) -> bool:
             "DELETE FROM waggle_app.sources WHERE id = $1 AND user_id = $2",
             source_id, user_id,
         )
-        return result == "DELETE 1"
+        return bool(result and result.startswith("DELETE") and result != "DELETE 0")
 
 
 # ── DASHBOARD HELPERS ────────────────────────────────────────────────────────
@@ -389,7 +390,7 @@ async def delete_dashboard(dashboard_id: str, user_id: str) -> bool:
             "DELETE FROM waggle_app.dashboards WHERE id = $1 AND user_id = $2",
             dashboard_id, user_id
         )
-        return result == "DELETE 1"
+        return bool(result and result.startswith("DELETE") and result != "DELETE 0")
 
 
 def _dashboard_row(row) -> dict:
@@ -401,7 +402,7 @@ def _dashboard_row(row) -> dict:
 
 def _source_row(row) -> dict:
     """Decode JSONB config from asyncpg back to a dict."""
-    import json
+
     d = dict(row)
     cfg = d.get("config")
     if isinstance(cfg, str):

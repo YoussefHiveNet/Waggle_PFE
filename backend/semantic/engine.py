@@ -8,7 +8,7 @@ from semantic.models import (
 )
 
 class SemanticEngine:
-    def __init__(self, model_dir: str | None = None):
+    def __init__(self, model_dir: Optional[str] = None):
         if model_dir is None:
             from config import DataPaths
             self.model_dir = DataPaths.sem_models

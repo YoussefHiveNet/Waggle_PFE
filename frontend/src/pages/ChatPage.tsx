@@ -93,7 +93,7 @@ export function ChatPage() {
   );
 
   return (
-    <div className="flex flex-col md:flex-row h-[100dvh] md:h-full min-h-0 overflow-hidden">
+    <div className="flex flex-col md:flex-row h-full min-h-0 overflow-hidden">
       {/* Left: conversation — full width on mobile, fixed on desktop */}
       <section
         className={`flex flex-col w-full md:w-[420px] xl:w-[480px] md:shrink-0 min-h-0 border-r border-[var(--color-border)] bg-[var(--color-card)] ${

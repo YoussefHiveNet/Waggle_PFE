@@ -37,17 +37,21 @@ export function SaveArtifactDialog({
 
   async function handleSave() {
     if (!name.trim()) return;
-    await create.mutateAsync({
-      connection_id: connectionId,
-      name: name.trim(),
-      question,
-      sql,
-      artifact_type: type,
-      style_config: styleConfig,
-      dashboard_id: dashboardId === "__default__" ? null : dashboardId,
-    });
-    toast({ description: `Saved "${name}" to your dashboard` });
-    onOpenChange(false);
+    try {
+      await create.mutateAsync({
+        connection_id: connectionId,
+        name: name.trim(),
+        question,
+        sql,
+        artifact_type: type,
+        style_config: styleConfig,
+        dashboard_id: dashboardId === "__default__" ? null : dashboardId,
+      });
+      toast({ description: `Saved "${name}" to your dashboard` });
+      onOpenChange(false);
+    } catch {
+      toast({ variant: "destructive", description: "Failed to save — please try again" });
+    }
   }
 
   return (

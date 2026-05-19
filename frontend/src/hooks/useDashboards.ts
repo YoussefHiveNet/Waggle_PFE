@@ -5,7 +5,7 @@ import type { Dashboard } from "@/types";
 export function useDashboards(connectionId: string | undefined) {
   return useQuery<Dashboard[]>({
     queryKey: ["dashboards", connectionId],
-    queryFn: () => dashboardService.list(connectionId!),
+    queryFn: () => connectionId ? dashboardService.list(connectionId) : Promise.resolve([]),
     enabled: !!connectionId,
   });
 }
