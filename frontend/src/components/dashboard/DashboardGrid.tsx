@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { MessageSquarePlus, Plus, MoreHorizontal, Pencil, Trash2, Sparkles } from "lucide-react";
+import {
+  DndContext, closestCenter, PointerSensor, useSensor, useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import { SortableContext, rectSortingStrategy, arrayMove, useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -10,20 +16,23 @@ import {
 import { useArtifacts, useUpdateLayout } from "@/hooks/useArtifacts";
 import { useDashboards, useCreateDashboard, useRenameDashboard, useDeleteDashboard } from "@/hooks/useDashboards";
 import { ArtifactCard } from "./ArtifactCard";
-import type { Artifact, Source } from "@/types";
+import type { Artifact, ArtifactLayout, Source } from "@/types";
 
 interface Props {
   selectedSource: Source | null;
 }
 
-// Map stored w value → column span (1–3).
-// Old RGL values used 12-col scale; new values are 1/2/3 directly.
+// Map stored layout.w → visual column span (1–3).
+// New values: 4→1, 8→2, 12→3. Old RGL values (0–12 scale) also handled.
 function toSpan(w: number | undefined): 1 | 2 | 3 {
-  if (!w || w <= 1) return 1;
-  if (w === 2) return 1;   // old RGL default w:2 → 1 col in 3-col grid
-  if (w <= 4) return 1;
+  if (!w || w <= 4) return 1;
   if (w <= 8) return 2;
   return 3;
+}
+
+// Map span (1–3) → stored layout.w
+function spanToW(span: 1 | 2 | 3): number {
+  return span === 1 ? 4 : span === 2 ? 8 : 12;
 }
 
 export function DashboardGrid({ selectedSource }: Props) {
@@ -41,12 +50,38 @@ export function DashboardGrid({ selectedSource }: Props) {
 
   useEffect(() => { setActiveDashboardId("__default__"); }, [connectionId]);
 
-  const filtered: Artifact[] = connectionId
+  // Sort by layout.x (used as position index)
+  const filtered = (connectionId
     ? artifacts.filter((a) => a.connection_id === connectionId)
-    : artifacts;
+    : artifacts
+  ).slice().sort((a, b) => (a.layout?.x ?? 0) - (b.layout?.x ?? 0));
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  );
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIdx = filtered.findIndex((a) => a.id === active.id);
+    const newIdx = filtered.findIndex((a) => a.id === over.id);
+    const reordered = arrayMove(filtered, oldIdx, newIdx);
+    reordered.forEach((a, i) => {
+      if ((a.layout?.x ?? 0) !== i) {
+        const layout: ArtifactLayout = { ...a.layout, x: i, y: 0, w: a.layout?.w ?? 4, h: a.layout?.h ?? 3 };
+        saveLayout({ id: a.id, layout });
+      }
+    });
+  }
 
   function handleSpanChange(artifact: Artifact, span: 1 | 2 | 3) {
-    saveLayout({ id: artifact.id, layout: { x: 0, y: 0, w: span, h: artifact.layout?.h ?? 3 } });
+    const layout: ArtifactLayout = {
+      x: artifact.layout?.x ?? 0,
+      y: 0,
+      w: spanToW(span),
+      h: artifact.layout?.h ?? 3,
+    };
+    saveLayout({ id: artifact.id, layout });
   }
 
   function handleCreateDashboard() {
@@ -74,21 +109,12 @@ export function DashboardGrid({ selectedSource }: Props) {
     <main className="flex-1 overflow-auto p-3 sm:p-6 flex flex-col min-h-0">
       <Header selectedSource={selectedSource} />
 
-      {/* Dashboard tab bar */}
       {selectedSource && (
         <div className="flex items-center gap-1 mb-4 border-b border-[var(--color-border)] overflow-x-auto pb-0 [scrollbar-width:none]">
-          <DashboardTab
-            label="Default"
-            active={activeDashboardId === "__default__"}
-            onClick={() => setActiveDashboardId("__default__")}
-          />
+          <DashboardTab label="Default" active={activeDashboardId === "__default__"} onClick={() => setActiveDashboardId("__default__")} />
           {dashboards.map((d) => (
             <div key={d.id} className="relative group flex items-center">
-              <DashboardTab
-                label={d.name}
-                active={activeDashboardId === d.id}
-                onClick={() => setActiveDashboardId(d.id)}
-              />
+              <DashboardTab label={d.name} active={activeDashboardId === d.id} onClick={() => setActiveDashboardId(d.id)} />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-muted)]">
@@ -117,7 +143,7 @@ export function DashboardGrid({ selectedSource }: Props) {
       )}
 
       {isLoading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {Array.from({ length: 4 }).map((_, i) => (
             <Skeleton key={i} className="h-[300px] rounded-xl" />
           ))}
@@ -125,26 +151,56 @@ export function DashboardGrid({ selectedSource }: Props) {
       ) : filtered.length === 0 ? (
         <EmptyState selectedSource={selectedSource} />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 auto-rows-[300px]">
-          {filtered.map((a) => {
-            const span = toSpan(a.layout?.w);
-            return (
-              <div
-                key={a.id}
-                style={{ gridColumn: `span ${span}` }}
-                className="min-w-0"
-              >
-                <ArtifactCard
-                  artifact={a}
-                  span={span}
-                  onSpanChange={(s) => handleSpanChange(a, s)}
-                />
-              </div>
-            );
-          })}
-        </div>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={filtered.map((a) => a.id)} strategy={rectSortingStrategy}>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 auto-rows-[300px]">
+              {filtered.map((a) => {
+                const span = toSpan(a.layout?.w);
+                return (
+                  <SortableCard
+                    key={a.id}
+                    artifact={a}
+                    span={span}
+                    onSpanChange={(s) => handleSpanChange(a, s)}
+                  />
+                );
+              })}
+            </div>
+          </SortableContext>
+        </DndContext>
       )}
     </main>
+  );
+}
+
+function SortableCard({
+  artifact, span, onSpanChange,
+}: {
+  artifact: Artifact;
+  span: 1 | 2 | 3;
+  onSpanChange: (span: 1 | 2 | 3) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: artifact.id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        gridColumn: `span ${span}`,
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.4 : 1,
+        zIndex: isDragging ? 10 : undefined,
+      }}
+      className="min-w-0"
+      {...attributes}
+    >
+      <ArtifactCard
+        artifact={artifact}
+        span={span}
+        onSpanChange={onSpanChange}
+        dragHandleListeners={listeners}
+      />
+    </div>
   );
 }
 

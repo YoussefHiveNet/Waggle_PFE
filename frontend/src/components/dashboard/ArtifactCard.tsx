@@ -19,6 +19,7 @@ interface Props {
   artifact: Artifact;
   span?: 1 | 2 | 3;
   onSpanChange?: (span: 1 | 2 | 3) => void;
+  dragHandleListeners?: Record<string, unknown>;
 }
 
 // `every:Ns` → milliseconds; null/empty/invalid → null (no polling).
@@ -37,7 +38,7 @@ function parseScheduleMs(schedule: string | null): number | null {
  *   - /query/{connection_id}     (LLM-regenerated) — fallback on 422
  * Cached for 5 min per artifact id so dashboard revisits paint instantly.
  */
-export function ArtifactCard({ artifact, span = 1, onSpanChange }: Props) {
+export function ArtifactCard({ artifact, span = 1, onSpanChange, dragHandleListeners }: Props) {
   const navigate = useNavigate();
   const del = useDeleteArtifact();
   const [editorOpen, setEditorOpen] = useState(false);
@@ -63,7 +64,7 @@ export function ArtifactCard({ artifact, span = 1, onSpanChange }: Props) {
   return (
     <>
       <div className="group relative flex flex-col h-full w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] overflow-hidden hover:shadow-md transition-shadow">
-        <div className="drag-handle flex items-start justify-between px-4 pt-4 pb-2 cursor-grab active:cursor-grabbing">
+        <div {...dragHandleListeners} className="drag-handle flex items-start justify-between px-4 pt-4 pb-2 cursor-grab active:cursor-grabbing">
           <div className="min-w-0 flex-1">
             <h3 className="font-medium text-[var(--color-foreground)] truncate">{artifact.name}</h3>
             <p className="text-xs text-[var(--color-muted-foreground)] truncate mt-0.5">
