@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/select";
 import { ARTIFACT_TYPES } from "@/components/artifacts/ArtifactRenderer";
 import { useCreateArtifact } from "@/hooks/useArtifacts";
+import { useDashboards } from "@/hooks/useDashboards";
 import { toast } from "@/hooks/useToast";
 import type { ArtifactType, StyleConfig } from "@/types";
 
@@ -30,7 +31,9 @@ export function SaveArtifactDialog({
 }: Props) {
   const [name, setName] = useState(defaultName);
   const [type, setType] = useState<ArtifactType>(defaultType);
+  const [dashboardId, setDashboardId] = useState<string>("__default__");
   const create = useCreateArtifact();
+  const { data: dashboards = [] } = useDashboards(connectionId);
 
   async function handleSave() {
     if (!name.trim()) return;
@@ -41,6 +44,7 @@ export function SaveArtifactDialog({
       sql,
       artifact_type: type,
       style_config: styleConfig,
+      dashboard_id: dashboardId === "__default__" ? null : dashboardId,
     });
     toast({ description: `Saved "${name}" to your dashboard` });
     onOpenChange(false);
@@ -82,6 +86,23 @@ export function SaveArtifactDialog({
               </SelectContent>
             </Select>
           </div>
+
+          {dashboards.length > 0 && (
+            <div>
+              <Label>Dashboard</Label>
+              <Select value={dashboardId} onValueChange={setDashboardId}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__default__">Default</SelectItem>
+                  {dashboards.map((d) => (
+                    <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
 
         <DialogFooter>

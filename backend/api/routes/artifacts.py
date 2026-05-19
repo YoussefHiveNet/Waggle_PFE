@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from auth.jwt import get_current_user
@@ -29,6 +29,7 @@ class ArtifactCreate(BaseModel):
     artifact_type:    str = "table"
     style_config:     dict = {}
     refresh_schedule: str = "daily"
+    dashboard_id:     Optional[str] = None
 
 class ArtifactUpdate(BaseModel):
     name:             Optional[str]  = None
@@ -37,6 +38,8 @@ class ArtifactUpdate(BaseModel):
     artifact_type:    Optional[str]  = None
     style_config:     Optional[dict] = None
     refresh_schedule: Optional[str]  = None
+    dashboard_id:     Optional[str]  = None
+    layout:           Optional[dict] = None
 
 
 # Row serialization lives in util.serialize — single source of truth for
@@ -60,13 +63,17 @@ async def save_artifact(
         artifact_type = body.artifact_type,
         style_config  = body.style_config,
         refresh_schedule = body.refresh_schedule,
+        dashboard_id  = body.dashboard_id,
     )
     return _serialize(artifact)
 
 
 @router.get("")
-async def get_artifacts(user_id: str = Depends(get_current_user)):
-    rows = await list_artifacts(user_id)
+async def get_artifacts(
+    user_id: str = Depends(get_current_user),
+    dashboard_id: Optional[str] = Query(None),
+):
+    rows = await list_artifacts(user_id, dashboard_id=dashboard_id)
     return [_serialize(r) for r in rows]
 
 

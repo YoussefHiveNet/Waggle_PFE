@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
 from auth.jwt import get_current_user
+from config import DataPaths
 from connectors.duckdb import (
     extract_schema_from_file, get_upload_path, validate_file_type,
 )
@@ -174,7 +175,7 @@ async def delete_source_route(
         if fp:
             Path(fp).unlink(missing_ok=True)
 
-    schema_cache = Path("data/schemas") / f"{connection_id}.json"
+    schema_cache = DataPaths.schemas / f"{connection_id}.json"
     schema_cache.unlink(missing_ok=True)
 
     await delete_source_for_user(connection_id, user_id)

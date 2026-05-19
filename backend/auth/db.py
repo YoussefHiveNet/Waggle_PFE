@@ -60,6 +60,20 @@ async def init_db() -> None:
         )
 
         await conn.execute("""
+            CREATE TABLE IF NOT EXISTS waggle_app.dashboards (
+                id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id       UUID NOT NULL REFERENCES waggle_app.users(id) ON DELETE CASCADE,
+                connection_id TEXT NOT NULL,
+                name          TEXT NOT NULL DEFAULT 'Dashboard',
+                created_at    TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_dashboards_user_conn "
+            "ON waggle_app.dashboards(user_id, connection_id)"
+        )
+
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS waggle_app.artifacts (
                 id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 user_id          UUID NOT NULL REFERENCES waggle_app.users(id) ON DELETE CASCADE,
@@ -75,6 +89,16 @@ async def init_db() -> None:
                 updated_at       TIMESTAMPTZ DEFAULT NOW()
             )
         """)
+        # Idempotent migrations — ADD COLUMN IF NOT EXISTS
+        await conn.execute(
+            "ALTER TABLE waggle_app.artifacts "
+            "ADD COLUMN IF NOT EXISTS dashboard_id UUID "
+            "REFERENCES waggle_app.dashboards(id) ON DELETE SET NULL"
+        )
+        await conn.execute(
+            "ALTER TABLE waggle_app.artifacts "
+            "ADD COLUMN IF NOT EXISTS layout JSONB NOT NULL DEFAULT '{\"x\":0,\"y\":0,\"w\":2,\"h\":3}'"
+        )
 
 
 # ── USER HELPERS ──────────────────────────────────────────────────────────────
@@ -146,7 +170,8 @@ async def delete_user_refresh_tokens(user_id: str) -> None:
 
 async def create_artifact(
     user_id: str, connection_id: str, name: str, question: str,
-    sql: str, artifact_type: str, style_config: dict, refresh_schedule: str
+    sql: str, artifact_type: str, style_config: dict, refresh_schedule: str,
+    dashboard_id: str | None = None,
 ) -> dict:
     import json
     pool = await get_app_pool()
@@ -154,23 +179,35 @@ async def create_artifact(
         row = await conn.fetchrow(
             """
             INSERT INTO waggle_app.artifacts
-                (user_id, connection_id, name, question, sql, artifact_type, style_config, refresh_schedule)
-            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+                (user_id, connection_id, name, question, sql, artifact_type,
+                 style_config, refresh_schedule, dashboard_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
             RETURNING *
             """,
             user_id, connection_id, name, question, sql,
-            artifact_type, json.dumps(style_config), refresh_schedule
+            artifact_type, json.dumps(style_config), refresh_schedule, dashboard_id
         )
         return dict(row)
 
 
-async def list_artifacts(user_id: str) -> list[dict]:
+async def list_artifacts(user_id: str, dashboard_id: str | None = None) -> list[dict]:
     pool = await get_app_pool()
     async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT * FROM waggle_app.artifacts WHERE user_id = $1 ORDER BY created_at DESC",
-            user_id
-        )
+        if dashboard_id == "__default__":
+            rows = await conn.fetch(
+                "SELECT * FROM waggle_app.artifacts WHERE user_id = $1 AND dashboard_id IS NULL ORDER BY created_at DESC",
+                user_id
+            )
+        elif dashboard_id:
+            rows = await conn.fetch(
+                "SELECT * FROM waggle_app.artifacts WHERE user_id = $1 AND dashboard_id = $2 ORDER BY created_at DESC",
+                user_id, dashboard_id
+            )
+        else:
+            rows = await conn.fetch(
+                "SELECT * FROM waggle_app.artifacts WHERE user_id = $1 ORDER BY created_at DESC",
+                user_id
+            )
         return [dict(r) for r in rows]
 
 
@@ -186,7 +223,7 @@ async def get_artifact(artifact_id: str, user_id: str) -> dict | None:
 
 async def update_artifact(artifact_id: str, user_id: str, **fields) -> dict | None:
     import json
-    allowed = {"name", "question", "sql", "artifact_type", "style_config", "refresh_schedule"}
+    allowed = {"name", "question", "sql", "artifact_type", "style_config", "refresh_schedule", "dashboard_id", "layout"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return await get_artifact(artifact_id, user_id)
@@ -195,7 +232,7 @@ async def update_artifact(artifact_id: str, user_id: str, **fields) -> dict | No
     values = []
     i = 1
     for k, v in updates.items():
-        if k == "style_config":
+        if k in ("style_config", "layout"):
             set_parts.append(f"{k} = ${i}::jsonb")
             values.append(json.dumps(v))
         else:
@@ -308,6 +345,58 @@ async def delete_source(source_id: str, user_id: str) -> bool:
             source_id, user_id,
         )
         return result == "DELETE 1"
+
+
+# ── DASHBOARD HELPERS ────────────────────────────────────────────────────────
+
+async def create_dashboard(user_id: str, connection_id: str, name: str) -> dict:
+    pool = await get_app_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO waggle_app.dashboards (user_id, connection_id, name) "
+            "VALUES ($1, $2, $3) RETURNING *",
+            user_id, connection_id, name
+        )
+        return _dashboard_row(row)
+
+
+async def list_dashboards(user_id: str, connection_id: str) -> list[dict]:
+    pool = await get_app_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM waggle_app.dashboards "
+            "WHERE user_id = $1 AND connection_id = $2 ORDER BY created_at ASC",
+            user_id, connection_id
+        )
+        return [_dashboard_row(r) for r in rows]
+
+
+async def rename_dashboard(dashboard_id: str, user_id: str, name: str) -> dict | None:
+    pool = await get_app_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "UPDATE waggle_app.dashboards SET name = $1 "
+            "WHERE id = $2 AND user_id = $3 RETURNING *",
+            name, dashboard_id, user_id
+        )
+        return _dashboard_row(row) if row else None
+
+
+async def delete_dashboard(dashboard_id: str, user_id: str) -> bool:
+    pool = await get_app_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM waggle_app.dashboards WHERE id = $1 AND user_id = $2",
+            dashboard_id, user_id
+        )
+        return result == "DELETE 1"
+
+
+def _dashboard_row(row) -> dict:
+    d = dict(row)
+    d["id"] = str(d["id"])
+    d["user_id"] = str(d["user_id"])
+    return d
 
 
 def _source_row(row) -> dict:

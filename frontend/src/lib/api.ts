@@ -8,6 +8,7 @@ import type {
   Artifact,
   ArtifactCreateRequest,
   ArtifactUpdateRequest,
+  Dashboard,
   UploadResponse,
   QueryRequest,
   QueryResponse,
@@ -96,7 +97,8 @@ export const authService = {
 // ── Artifact service ──────────────────────────────────────────────────────────
 
 export const artifactService = {
-  list: () => api.get<Artifact[]>("/artifacts").then((r) => r.data),
+  list: (dashboardId?: string | null) =>
+    api.get<Artifact[]>("/artifacts", { params: dashboardId !== undefined ? { dashboard_id: dashboardId } : {} }).then((r) => r.data),
 
   get: (id: string) => api.get<Artifact>(`/artifacts/${id}`).then((r) => r.data),
 
@@ -112,6 +114,21 @@ export const artifactService = {
     api
       .post<{ data: Row[]; row_count: number; last_refreshed: string }>(`/artifacts/${id}/execute`)
       .then((r) => r.data),
+};
+
+// ── Dashboard service ─────────────────────────────────────────────────────────
+
+export const dashboardService = {
+  list: (connectionId: string) =>
+    api.get<Dashboard[]>("/dashboards", { params: { connection_id: connectionId } }).then((r) => r.data),
+
+  create: (connectionId: string, name: string) =>
+    api.post<Dashboard>("/dashboards", { connection_id: connectionId, name }).then((r) => r.data),
+
+  rename: (id: string, name: string) =>
+    api.patch<Dashboard>(`/dashboards/${id}`, { name }).then((r) => r.data),
+
+  delete: (id: string) => api.delete(`/dashboards/${id}`),
 };
 
 // ── Source service ────────────────────────────────────────────────────────────

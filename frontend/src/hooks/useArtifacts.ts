@@ -2,7 +2,7 @@ import axios from "axios";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { artifactService, queryService, extractError } from "@/lib/api";
 import type {
-  Artifact, ArtifactCreateRequest, ArtifactUpdateRequest,
+  Artifact, ArtifactCreateRequest, ArtifactUpdateRequest, ArtifactLayout,
   QueryToolResult, ToolCall,
 } from "@/types";
 import { toast } from "@/hooks/useToast";
@@ -10,10 +10,10 @@ import { toast } from "@/hooks/useToast";
 const ARTIFACTS_KEY = ["artifacts"] as const;
 const dataKey = (id: string) => ["artifact-data", id] as const;
 
-export function useArtifacts() {
+export function useArtifacts(dashboardId?: string | null) {
   return useQuery({
-    queryKey: ARTIFACTS_KEY,
-    queryFn: artifactService.list,
+    queryKey: dashboardId !== undefined ? [...ARTIFACTS_KEY, dashboardId] : ARTIFACTS_KEY,
+    queryFn: () => artifactService.list(dashboardId),
   });
 }
 
@@ -59,6 +59,17 @@ export function useDeleteArtifact() {
       qc.removeQueries({ queryKey: dataKey(id) });
     },
     onError: (err) => toast({ variant: "destructive", description: extractError(err) }),
+  });
+}
+
+export function useUpdateLayout() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, layout }: { id: string; layout: ArtifactLayout }) =>
+      artifactService.update(id, { layout }),
+    onSuccess: (updated: Artifact) => {
+      qc.setQueryData(["artifacts", updated.id], updated);
+    },
   });
 }
 

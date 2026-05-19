@@ -16,15 +16,16 @@ import { cn } from "@/lib/utils";
 interface Props {
   selectedId: string | null;
   onSelect: (id: string) => void;
+  className?: string;
 }
 
-export function SourceSidebar({ selectedId, onSelect }: Props) {
+export function SourceSidebar({ selectedId, onSelect, className }: Props) {
   const { data: sources, isLoading } = useSources();
   const [adding, setAdding] = useState(false);
   const [onboardingId, setOnboardingId] = useState<string | null>(null);
 
   return (
-    <aside className="w-64 shrink-0 border-r border-[var(--color-border)] bg-[var(--color-card)] flex flex-col">
+    <aside className={cn("hidden md:flex w-64 shrink-0 border-r border-[var(--color-border)] bg-[var(--color-card)] flex-col", className)}>
       <div className="px-4 pt-4 pb-2 flex items-center justify-between">
         <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-muted-foreground)]">
           Sources

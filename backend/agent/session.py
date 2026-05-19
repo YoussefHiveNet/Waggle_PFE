@@ -20,8 +20,9 @@ import time
 import uuid
 from pathlib import Path
 from typing import Literal, Optional
+from config import DataPaths
 
-SESSIONS_DIR = Path("data/sessions")
+SESSIONS_DIR = DataPaths.sessions
 
 MessageRole = Literal["user", "assistant", "tool", "system"]
 

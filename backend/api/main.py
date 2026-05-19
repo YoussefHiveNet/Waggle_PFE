@@ -12,8 +12,9 @@ from api.routes.semantic  import router as semantic_router
 from api.routes.query     import router as query_router
 from api.routes.session   import router as session_router
 from api.routes.auth      import router as auth_router
-from api.routes.artifacts import router as artifacts_router
-from api.routes.sources   import router as sources_router
+from api.routes.artifacts  import router as artifacts_router
+from api.routes.sources    import router as sources_router
+from api.routes.dashboards import router as dashboards_router
 
 
 @asynccontextmanager
@@ -34,6 +35,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(artifacts_router)
+app.include_router(dashboards_router)
 app.include_router(sources_router)
 app.include_router(connect_router)
 app.include_router(schema_router)

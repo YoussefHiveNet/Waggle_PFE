@@ -8,8 +8,13 @@ from semantic.models import (
 )
 
 class SemanticEngine:
-    def __init__(self, model_dir: str = "semantic/models"):
-        self.model_dir = Path(model_dir)
+    def __init__(self, model_dir: str | None = None):
+        if model_dir is None:
+            from config import DataPaths
+            self.model_dir = DataPaths.sem_models
+        else:
+            self.model_dir = Path(model_dir)
+        self.model_dir.mkdir(parents=True, exist_ok=True)
         self._cache: dict[str, SemanticModel] = {}
 
     def load(self, connection_id: str) -> SemanticModel:

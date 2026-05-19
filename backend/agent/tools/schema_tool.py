@@ -13,9 +13,10 @@ from pathlib import Path
 from connectors.postgres import extract_schema
 from connectors.duckdb import extract_schema_from_file
 from connectors.store import get_source
+from config import DataPaths
 
 # Simple file cache — avoids re-extracting on every request
-CACHE_DIR = Path("data/schemas")
+CACHE_DIR = DataPaths.schemas
 
 def _cache_path(connection_id: str) -> Path:
     return CACHE_DIR / f"{connection_id}.json"

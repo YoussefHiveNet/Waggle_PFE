@@ -1,7 +1,17 @@
 from dotenv import load_dotenv
+from pathlib import Path
 import os
 
 load_dotenv()
+
+# Absolute path to the backend/ directory — safe regardless of uvicorn cwd
+BASE_DIR = Path(__file__).resolve().parent
+
+class DataPaths:
+    sessions   = BASE_DIR / "data" / "sessions"
+    schemas    = BASE_DIR / "data" / "schemas"
+    uploads    = BASE_DIR / "data" / "uploads"
+    sem_models = BASE_DIR / "semantic" / "models"
 
 class LLMConfig:
     base_url    = os.getenv("LLM_BASE_URL")
@@ -29,4 +39,4 @@ class AuthConfig:
     algorithm  = "HS256"
 
 class UploadConfig:
-    upload_dir = os.getenv("UPLOAD_DIR", "data/uploads")
+    upload_dir = os.getenv("UPLOAD_DIR", str(DataPaths.uploads))

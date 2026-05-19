@@ -92,6 +92,13 @@ export interface StyleConfig {
   [key: string]: unknown;
 }
 
+export interface ArtifactLayout {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface Artifact {
   id: string;
   user_id: string;
@@ -103,6 +110,8 @@ export interface Artifact {
   style_config: StyleConfig;
   refresh_schedule: string | null;
   last_refreshed: string | null;
+  dashboard_id: string | null;
+  layout: ArtifactLayout;
   created_at: string;
   updated_at: string;
 }
@@ -115,9 +124,29 @@ export interface ArtifactCreateRequest {
   artifact_type: ArtifactType;
   style_config?: StyleConfig;
   refresh_schedule?: string;
+  dashboard_id?: string | null;
 }
 
-export type ArtifactUpdateRequest = Partial<ArtifactCreateRequest>;
+export interface ArtifactUpdateRequest {
+  name?: string;
+  question?: string;
+  sql?: string;
+  artifact_type?: ArtifactType;
+  style_config?: StyleConfig;
+  refresh_schedule?: string;
+  dashboard_id?: string | null;
+  layout?: ArtifactLayout;
+}
+
+// ── Dashboards ────────────────────────────────────────────────────────────────
+
+export interface Dashboard {
+  id: string;
+  user_id: string;
+  connection_id: string;
+  name: string;
+  created_at: string;
+}
 
 // ── Query / agent runtime ─────────────────────────────────────────────────────
 

@@ -60,8 +60,8 @@ export function ArtifactCard({ artifact }: Props) {
 
   return (
     <>
-      <div className="group relative flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] overflow-hidden hover:shadow-md transition-shadow">
-        <div className="flex items-start justify-between px-4 pt-4 pb-2">
+      <div className="group relative flex flex-col h-full w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] overflow-hidden hover:shadow-md transition-shadow">
+        <div className="drag-handle flex items-start justify-between px-4 pt-4 pb-2 cursor-grab active:cursor-grabbing">
           <div className="min-w-0 flex-1">
             <h3 className="font-medium text-[var(--color-foreground)] truncate">{artifact.name}</h3>
             <p className="text-xs text-[var(--color-muted-foreground)] truncate mt-0.5">
@@ -98,7 +98,7 @@ export function ArtifactCard({ artifact }: Props) {
           </div>
         </div>
 
-        <div className="flex-1 px-4 pb-4 min-h-[180px] h-[240px]">
+        <div className="flex-1 px-4 pb-4 min-h-0 overflow-hidden">
           {isLoading ? (
             <Skeleton className="h-full w-full" />
           ) : errorMsg ? (

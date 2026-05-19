@@ -208,17 +208,22 @@ async def generate_semantic_model(
     model_dict = None
     try:
         model_dict = _parse_json(assemble_response)
-    except Exception as e:
-        # Fallback: ask for one cube at a time and assemble manually
-        model_dict = await _assemble_per_cube(
-            schema, classifications, fk_text, rules_text
-        )
+    except Exception as parse_err:
+        try:
+            model_dict = await _assemble_per_cube(
+                schema, classifications, fk_text, rules_text
+            )
+        except Exception as cube_err:
+            return {"status": "error", "detail": f"Model assembly failed: {cube_err}"}
         if model_dict is None:
-            return {"status": "error", "detail": f"LLM output parse failed: {e}"}
+            return {"status": "error", "detail": f"LLM output unparseable: {parse_err}"}
 
     # Step 6: convert to SemanticModel and save
-    model = _dict_to_model(model_dict)
-    path  = engine.save(connection_id, model)
+    try:
+        model = _dict_to_model(model_dict)
+        path  = engine.save(connection_id, model)
+    except Exception as e:
+        return {"status": "error", "detail": f"Model save failed: {e}"}
 
     return {
         "status":     "ok",
@@ -237,6 +242,8 @@ def _parse_json(text: str) -> any:
     - Single-line // comments
     - Leading/trailing prose around the JSON object or array
     """
+    # Strip BOM and null bytes that some models emit
+    text = text.encode("utf-8", "ignore").decode("utf-8").strip("﻿\x00")
     text = text.strip()
 
     # 1. Strip markdown fences

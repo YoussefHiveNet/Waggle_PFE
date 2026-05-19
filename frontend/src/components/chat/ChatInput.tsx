@@ -34,7 +34,7 @@ export function ChatInput({ onSend, disabled }: Props) {
   }
 
   return (
-    <div className="border-t border-[var(--color-border)] bg-[var(--color-card)] p-3">
+    <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-card)] p-3">
       <div className="flex gap-2 items-end rounded-xl border border-[var(--color-input)] bg-[var(--color-background)] p-2 focus-within:ring-2 focus-within:ring-[var(--color-ring)] transition">
         <textarea
           ref={ref}
