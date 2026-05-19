@@ -8,7 +8,7 @@ class LLMConfig:
     api_key     = os.getenv("LLM_API_KEY")
     model       = os.getenv("LLM_MODEL", "meta-llama/Llama-3.3-70B-Instruct")
     temperature = 0.1
-    max_tokens  = 2048
+    max_tokens  = 8192
 
 class DBConfig:
     host     = os.getenv("PG_HOST", "localhost")

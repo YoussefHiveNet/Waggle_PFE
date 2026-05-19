@@ -19,7 +19,8 @@ def get_client() -> AsyncOpenAI:
 async def generate(
     prompt: str,
     system: str = "",
-    messages: Optional[list[dict]] = None
+    messages: Optional[list[dict]] = None,
+    max_tokens: Optional[int] = None,
 ) -> str:
     """
     Call the LLM.
