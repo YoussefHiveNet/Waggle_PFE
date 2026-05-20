@@ -1,19 +1,6 @@
 # agent/tools/semantic_tool.py
 from __future__ import annotations
 from typing import Optional
-"""
-semantic_tool.py
-
-Takes a raw schema dict + optional user business rules
-and uses the LLM to generate a semantic YAML model.
-
-Pipeline:
-  1. Classify each column (dimension / measure / time / skip)
-  2. Confirm FK joins
-  3. Generate business clarification questions
-  4. Assemble YAML model
-  5. Save via SemanticEngine
-"""
 import json
 import re
 from agent.llm import generate
@@ -132,13 +119,16 @@ async def generate_semantic_model(
     connection_id: str,
     business_rules: Optional[dict] = None
 ) -> dict:
-    """
-    Full pipeline: schema → classify → questions → assemble → save.
-    Returns a dict with the model path and generated questions.
-    """
+
+    print(f"[SEM] START connection_id={connection_id} business_rules={business_rules}", flush=True)
+
     # Step 1: get schema
     schema = await get_schema(connection_id)
-    fks    = get_foreign_keys(schema)
+    print(f"[SEM] schema tables={list(schema.keys())}", flush=True)
+    print(f"[SEM] table count={len(schema)}", flush=True)
+
+    fks = get_foreign_keys(schema)
+    print(f"[SEM] fk count={len(fks)}", flush=True)
 
     # Step 2: classify columns per table
     classifications = {}
@@ -150,7 +140,7 @@ async def generate_semantic_model(
                if c["foreign_key"] else "")
             for c in table_data["columns"]
         ]
-        samples  = table_data.get("sample_rows", [])[:2]
+        samples = table_data.get("sample_rows", [])[:2]
         response = await generate(
             CLASSIFY_PROMPT.format(
                 table_name=table_name,
@@ -160,25 +150,33 @@ async def generate_semantic_model(
         )
         try:
             classifications[table_name] = _parse_json(response)
-        except Exception:
-            # Fallback: classify everything as dimension
+            print(f"[SEM] classified {table_name}: {classifications[table_name]}", flush=True)
+        except Exception as e:
+            print(f"[SEM] classify FAILED for {table_name}: {e} | raw={response[:200]}", flush=True)
             classifications[table_name] = {
                 c["name"]: "dimension"
                 for c in table_data["columns"]
             }
 
-    # Step 3: generate clarification questions (returned to frontend)
+    print(f"[SEM] classification done for {len(classifications)} tables", flush=True)
+
+    # Step 3: generate clarification questions
     schema_summary = format_for_llm(schema, max_sample_rows=0)
-    q_response     = await generate(
+    print(f"[SEM] schema_summary size={len(schema_summary)} chars ~{len(schema_summary)//4} tokens", flush=True)
+
+    q_response = await generate(
         QUESTIONS_PROMPT.format(schema_summary=schema_summary)
     )
     try:
         questions = _parse_json(q_response)
-    except Exception:
+        print(f"[SEM] questions generated: {len(questions)}", flush=True)
+    except Exception as e:
+        print(f"[SEM] questions FAILED: {e}", flush=True)
         questions = []
 
-    # Step 4: if no business rules yet, return questions for user to answer
+    # Step 4: if no business rules yet, return questions
     if not business_rules:
+        print(f"[SEM] no business_rules, returning questions", flush=True)
         return {
             "status":    "needs_input",
             "questions": questions,
@@ -195,35 +193,55 @@ async def generate_semantic_model(
         f"- {k}: {v}" for k, v in business_rules.items()
     ])
 
-    assemble_response = await generate(
-        ASSEMBLE_PROMPT.format(
-            schema_context=format_for_llm(schema),
-            classifications=json.dumps(classifications, indent=2),
-            fk_relationships=fk_text or "none detected",
-            business_rules=rules_text or "none provided"
-        ),
-        max_tokens=8192,
-    )
+    schema_context = format_for_llm(schema)
+    classifications_json = json.dumps(classifications, indent=2)
 
-    model_dict = None
-    try:
-        model_dict = _parse_json(assemble_response)
-    except Exception as parse_err:
-        try:
-            model_dict = await _assemble_per_cube(
-                schema, classifications, fk_text, rules_text
-            )
-        except Exception as cube_err:
-            return {"status": "error", "detail": f"Model assembly failed: {cube_err}"}
+    prompt_text = ASSEMBLE_PROMPT.format(
+        schema_context=schema_context,
+        classifications=classifications_json,
+        fk_relationships=fk_text or "none detected",
+        business_rules=rules_text or "none provided"
+    )
+    print(f"[SEM] ASSEMBLE prompt size={len(prompt_text)} chars ~{len(prompt_text)//4} tokens", flush=True)
+    print(f"[SEM] schema_context size={len(schema_context)} chars", flush=True)
+    print(f"[SEM] classifications_json size={len(classifications_json)} chars", flush=True)
+
+    # If prompt is too large for context window (30k token limit = ~120k chars), skip straight to per-cube
+    if len(prompt_text) > 100000:
+        print(f"[SEM] prompt too large ({len(prompt_text)} chars), going straight to per-cube fallback", flush=True)
+        model_dict = await _assemble_per_cube(schema, classifications, fk_text, rules_text)
         if model_dict is None:
-            return {"status": "error", "detail": f"LLM output unparseable: {parse_err}"}
+            return {"status": "error", "detail": "Per-cube assembly failed — all tables returned bad JSON"}
+    else:
+        print(f"[SEM] sending ASSEMBLE prompt to LLM", flush=True)
+        assemble_response = await generate(prompt_text, max_tokens=8192)
+        print(f"[SEM] ASSEMBLE response size={len(assemble_response)} chars", flush=True)
+        print(f"[SEM] ASSEMBLE response first 500: {assemble_response[:500]}", flush=True)
+
+        model_dict = None
+        try:
+            model_dict = _parse_json(assemble_response)
+            print(f"[SEM] parsed model_dict cubes={len(model_dict.get('cubes', []))}", flush=True)
+            if len(model_dict.get("cubes", [])) == 0:
+                print(f"[SEM] LLM returned 0 cubes — falling back to per-cube", flush=True)
+                model_dict = await _assemble_per_cube(schema, classifications, fk_text, rules_text)
+        except Exception as e:
+            print(f"[SEM] parse FAILED: {e} — falling back to per-cube", flush=True)
+            model_dict = await _assemble_per_cube(schema, classifications, fk_text, rules_text)
+            if model_dict is None:
+                return {"status": "error", "detail": f"LLM output parse failed: {e}"}
+
+    if model_dict is None:
+        print(f"[SEM] model_dict is None after all fallbacks", flush=True)
+        return {"status": "error", "detail": "All assembly strategies failed"}
+
+    print(f"[SEM] final cube count before save: {len(model_dict.get('cubes', []))}", flush=True)
 
     # Step 6: convert to SemanticModel and save
-    try:
-        model = _dict_to_model(model_dict)
-        path  = engine.save(connection_id, model)
-    except Exception as e:
-        return {"status": "error", "detail": f"Model save failed: {e}"}
+    model = _dict_to_model(model_dict)
+    print(f"[SEM] _dict_to_model produced {len(model.cubes)} cubes", flush=True)
+    path = engine.save(connection_id, model)
+    print(f"[SEM] saved to {path}", flush=True)
 
     return {
         "status":     "ok",
@@ -235,49 +253,28 @@ async def generate_semantic_model(
 # ── HELPERS ────────────────────────────────────────────────────────────────
 
 def _parse_json(text: str) -> any:
-    """
-    Tolerant JSON parser. Handles:
-    - Markdown fences (```json ... ``` or ``` ... ```)
-    - Trailing commas before } or ]
-    - Single-line // comments
-    - Leading/trailing prose around the JSON object or array
-    """
     # Strip BOM and null bytes that some models emit
     text = text.encode("utf-8", "ignore").decode("utf-8").strip("﻿\x00")
     text = text.strip()
-
-    # 1. Strip markdown fences
     text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
     text = re.sub(r"\n?```$", "", text)
     text = text.strip()
-
-    # 2. Extract the first balanced JSON object or array (skip leading prose)
     text = _extract_first_json(text)
-
-    # 3. Strip single-line // comments (outside strings — best-effort)
     text = re.sub(r'(?m)//[^\n"]*$', "", text)
-
-    # 4. Remove trailing commas before } or ]
     text = re.sub(r",\s*([}\]])", r"\1", text)
-
     return json.loads(text)
 
 
 def _extract_first_json(text: str) -> str:
-    """
-    Walk forward to find the first { or [ and return the balanced block.
-    If the text IS already clean JSON, returns it unchanged.
-    """
     for start, open_char, close_char in [
         (text.find("{"), "{", "}"),
         (text.find("["), "[", "]"),
     ]:
         if start == -1:
             continue
-        # Pick whichever opener comes first
         other_start = text.find("[") if open_char == "{" else text.find("{")
         if other_start != -1 and other_start < start:
-            continue  # the other opener is earlier; its branch will handle it
+            continue
         depth = 0
         in_string = False
         escape_next = False
@@ -299,7 +296,7 @@ def _extract_first_json(text: str) -> str:
                 depth -= 1
                 if depth == 0:
                     return text[start : i + 1]
-    return text  # unchanged if no balanced block found
+    return text
 
 
 async def _assemble_per_cube(
@@ -308,16 +305,14 @@ async def _assemble_per_cube(
     fk_text: str,
     rules_text: str,
 ) -> Optional[dict]:
-    """
-    Fallback: ask the LLM for ONE cube at a time, then merge results.
-    Returns a model dict compatible with _dict_to_model, or None on total failure.
-    """
+    print(f"[SEM] _assemble_per_cube START tables={list(schema.keys())}", flush=True)
     cubes = []
     for table_name, table_data in schema.items():
         table_schema = format_for_llm({table_name: table_data})
-        table_cls    = json.dumps(
+        table_cls = json.dumps(
             {table_name: classifications.get(table_name, {})}, indent=2
         )
+        print(f"[SEM] per-cube generating for {table_name} (schema={len(table_schema)} chars)", flush=True)
         response = await generate(
             SINGLE_CUBE_PROMPT.format(
                 table_name=table_name,
@@ -328,16 +323,18 @@ async def _assemble_per_cube(
             ),
             max_tokens=2048,
         )
+        print(f"[SEM] per-cube response for {table_name}: {response[:300]}", flush=True)
         try:
             cube_dict = _parse_json(response)
+            print(f"[SEM] per-cube parsed OK for {table_name}: name={cube_dict.get('name')}", flush=True)
             cubes.append(cube_dict)
-        except Exception:
-            # Skip this cube if the LLM still can't produce clean JSON
+        except Exception as e:
+            print(f"[SEM] per-cube parse FAILED for {table_name}: {e}", flush=True)
             continue
 
+    print(f"[SEM] _assemble_per_cube done: {len(cubes)} cubes collected", flush=True)
     if not cubes:
         return None
-
     return {"cubes": cubes, "assertions": []}
 
 
