@@ -67,7 +67,19 @@ export function useUpdateLayout() {
   return useMutation({
     mutationFn: ({ id, layout }: { id: string; layout: ArtifactLayout }) =>
       artifactService.update(id, { layout }),
-    onSuccess: () => {
+    onMutate: async ({ id, layout }) => {
+      await qc.cancelQueries({ queryKey: ARTIFACTS_KEY });
+      const previous = qc.getQueriesData<Artifact[]>({ queryKey: ARTIFACTS_KEY });
+      qc.setQueriesData<Artifact[]>(
+        { queryKey: ARTIFACTS_KEY, exact: false },
+        (old) => Array.isArray(old) ? old.map((a) => a.id === id ? { ...a, layout } : a) : old
+      );
+      return { previous };
+    },
+    onError: (_err, _vars, ctx) => {
+      ctx?.previous.forEach(([key, data]) => qc.setQueryData(key, data));
+    },
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: ARTIFACTS_KEY });
     },
   });
