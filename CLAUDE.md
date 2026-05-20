@@ -788,6 +788,26 @@ The 50-table schema is unchanged: HR/Org · CRM · Products · Sales · SaaS · 
 - [ ] Hardcoded values to env: CORS origins (`api/main.py:29`), `verify=False` SSL toggle (`agent/llm.py:15`), `MAX_ATTEMPTS=3` (`agent/tools/query_tool.py`), `MAX_FILE_SIZE=100MB` (`api/routes/sources.py:34`), validation row-limit `10000` (`validation/engine.py:78`).
 - [ ] Add `pytest` test infrastructure — start with route smoke tests + one agent end-to-end on `waggle_demo`.
 
+### Chat quality / LLM reliability backlog (surfaced 2026-05-20 — Demo store session)
+
+These failures were observed in a real session on the `Demo store` (DuckDB / CSV) source and represent patterns to fix before any public demo.
+
+**Observed failures:**
+
+1. **Hallucinated answer instead of calling query tool.** User asked "give me a table with table names and number of rows" — LLM replied "There were no new products added this month across all categories" (completely off-topic). Root cause: the question did not match any keyword in the semantic model's cube/measure names, so `_resolve_cubes` returned few/no relevant cubes; the LLM then fabricated an answer from the schema sample rows baked into the context rather than calling the `query` tool.
+   - **Fix direction:** strengthen the system prompt to always call the `query` tool when the question asks for counts, rows, or data that cannot be answered from the schema description alone. Add a fallback: if `_resolve_cubes` returns 0 cubes, pass the full schema context (not just samples) so the LLM has enough to write a generic `information_schema` query.
+
+2. **Silent failure with no useful error.** On the rephrased "give me number of rows of each table in the database" — LLM replied "I couldn't retrieve the information you requested." No SQL was attempted, no error was surfaced. Root cause: the LLM's `query` tool call likely produced a SQL that failed silently (e.g. `information_schema` tables not available in DuckDB for uploaded files), and the runtime returned a generic failure message instead of the actual error.
+   - **Fix direction:** `_summarize_tool_result` in `runtime.py` should include the error detail when `status != "ok"` so the synthesizing LLM call can explain what went wrong. Surface DuckDB schema introspection queries properly (DuckDB uses `PRAGMA table_info(...)` or `duckdb_tables()` instead of `information_schema`).
+
+3. **Wrong counts on follow-up.** "Can you show me total products in each category?" → LLM answered "three categories contain nine products each: Electronics, Books" (hallucinated). Same root cause as #1: `query` tool was never called.
+   - **Fix direction:** same as #1. Also consider adding a heuristic in `_parse_tool_call` that if the response contains numbers or counts about the data but no tool was called, force a retry with an explicit instruction "you must call the query tool to get this data."
+
+**Files to revisit:**
+- `backend/agent/runtime.py` — `run_turn`, `_summarize_tool_result`, `_parse_tool_call`
+- `backend/agent/tools/query_tool.py` — `_resolve_cubes` fallback when 0 cubes matched
+- `backend/agent/tools/schema_tool.py` — DuckDB schema introspection queries
+
 ### M6 — BigQuery connector
 - [ ] `connectors/bigquery.py` — same interface as `postgres.py`
 - [ ] Add `db_type: bigquery` support to `/connect`

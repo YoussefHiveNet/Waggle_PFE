@@ -110,7 +110,7 @@ export function DashboardGrid({ selectedSource }: Props) {
       <Header selectedSource={selectedSource} />
 
       {selectedSource && (
-        <div className="flex items-center gap-1 mb-4 border-b border-[var(--color-border)] overflow-x-auto pb-0 [scrollbar-width:none]">
+        <div className="sticky top-0 z-10 bg-[var(--color-background)] flex items-center gap-1 mb-4 border-b border-[var(--color-border)] overflow-x-auto pb-0 [scrollbar-width:none]">
           <DashboardTab label="Default" active={activeDashboardId === "__default__"} onClick={() => setActiveDashboardId("__default__")} />
           {dashboards.map((d) => (
             <div key={d.id} className="relative group flex items-center">

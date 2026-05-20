@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  MoreHorizontal, Trash2, MessageSquare, RefreshCw, AlertCircle, Pencil, Clock,
+  GripVertical, MoreHorizontal, Trash2, MessageSquare, RefreshCw, AlertCircle, Pencil, Clock,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
@@ -64,7 +64,13 @@ export function ArtifactCard({ artifact, span = 1, onSpanChange, dragHandleListe
   return (
     <>
       <div className="group relative flex flex-col h-full w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] overflow-hidden hover:shadow-md transition-shadow">
-        <div {...dragHandleListeners} className="drag-handle flex items-start justify-between px-4 pt-4 pb-2 cursor-grab active:cursor-grabbing">
+        <div className="flex items-start justify-between px-4 pt-4 pb-2">
+          <div
+            {...dragHandleListeners}
+            className="flex items-center self-stretch pr-2 cursor-grab active:cursor-grabbing text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+          >
+            <GripVertical className="h-4 w-4 shrink-0" />
+          </div>
           <div className="min-w-0 flex-1">
             <h3 className="font-medium text-[var(--color-foreground)] truncate">{artifact.name}</h3>
             <p className="text-xs text-[var(--color-muted-foreground)] truncate mt-0.5">
