@@ -776,12 +776,24 @@ The 50-table schema is unchanged: HR/Org · CRM · Products · Sales · SaaS · 
 - [ ] Promote `/tmp/waggle_demo_seed.sql` into `backend/scripts/seed_demo.sql` (companion to `seed_hard.sql`)
 - [ ] DB-level cached `last_data` JSONB column (Layer 3 caching) — defer until current 5-min TanStack cache proves insufficient
 
+### Day 15 — Dashboard grid polish (2026-05-20)
+
+**Shipped:**
+- ✅ Replaced react-grid-layout with CSS 3-column grid + @dnd-kit drag-to-reorder. Positions saved as `layout.x` index; span (1/2/3 cols) saved as `layout.w` (4/8/12). `useUpdateLayout` uses TanStack optimistic updates (`onMutate` + `onError` rollback + `onSettled` refetch) so cards resize instantly on click.
+- ✅ `dragHandleListeners` moved from full card header to a dedicated `GripVertical` icon — span buttons now receive clicks correctly.
+- ✅ Dashboard tab bar is `sticky top-0 z-10` so it doesn't scroll away with many artifacts.
+- ✅ "New dashboard" button pulled outside the scrollable tab area into a `shrink-0` sibling — always visible regardless of viewport width or number of tabs.
+
+**Remaining / next session:**
+- [ ] **Artifact height control.** Cards are fixed at `auto-rows-[300px]`. Add a height selector (S/M/L = 200/300/500px) similar to the column-span buttons, persisted to `layout.h`.
+- [ ] **Mobile span handling.** On `grid-cols-1` (mobile), spans 2 and 3 overflow. Either clamp span to 1 on mobile, or switch to a 2-col mobile grid.
+
 ### Day 14+ — Backlog from 2026-05-18 cleanup session
 
 **UX / product**
 - [ ] **Logging UX overhaul.** Clearer "logged in as X" indicator; visible session timer / "logs you out in N hours if inactive"; logout button discoverable on every screen; friendly "session expired" toast instead of silent redirect to `/login`.
-- [ ] **Draggable + resizable artifact tiles** in the dashboard. Use `react-grid-layout` (~12 KB gzipped, battle-tested) for grid editing; persist `layout: {x, y, w, h}` per artifact (new column on `artifacts` table). Mobile: drop into a single-column stack.
-- [ ] **Multiple dashboards per user.** New `dashboards` table (`id`, `user_id`, `name`); `artifacts.dashboard_id` FK; sidebar to switch dashboards; "create" + "rename" flows. Each dashboard owns its own layout.
+- ✅ ~~Draggable + resizable artifact tiles~~ — shipped Day 15 (CSS grid + @dnd-kit).
+- ✅ ~~Multiple dashboards per user~~ — shipped Day 13.
 
 **Cleanup backlog (from 2026-05-18 scan, deferred)**
 - [ ] Bare `except Exception: pass` in `backend/validation/engine.py:80, 150` and `backend/connectors/postgres.py:149` — replace with specific exceptions + warning logs.
