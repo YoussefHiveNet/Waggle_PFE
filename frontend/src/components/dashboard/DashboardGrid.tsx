@@ -110,34 +110,39 @@ export function DashboardGrid({ selectedSource }: Props) {
       <Header selectedSource={selectedSource} />
 
       {selectedSource && (
-        <div className="sticky top-0 z-10 bg-[var(--color-background)] flex items-center gap-1 mb-4 border-b border-[var(--color-border)] overflow-x-auto pb-0 [scrollbar-width:none]">
-          <DashboardTab label="Default" active={activeDashboardId === "__default__"} onClick={() => setActiveDashboardId("__default__")} />
-          {dashboards.map((d) => (
-            <div key={d.id} className="relative group flex items-center">
-              <DashboardTab label={d.name} active={activeDashboardId === d.id} onClick={() => setActiveDashboardId(d.id)} />
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-muted)]">
-                    <MoreHorizontal className="h-3 w-3" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onSelect={() => handleRenameDashboard(d.id, d.name)}>
-                    <Pencil className="h-3.5 w-3.5 mr-1.5" /> Rename
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem destructive onSelect={() => handleDeleteDashboard(d.id)}>
-                    <Trash2 className="h-3.5 w-3.5 mr-1.5" /> Delete
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          ))}
+        <div className="sticky top-0 z-10 bg-[var(--color-background)] flex items-stretch mb-4 border-b border-[var(--color-border)]">
+          {/* Tabs — scrollable, takes remaining width */}
+          <div className="flex items-center gap-1 overflow-x-auto flex-1 min-w-0 [scrollbar-width:none]">
+            <DashboardTab label="Default" active={activeDashboardId === "__default__"} onClick={() => setActiveDashboardId("__default__")} />
+            {dashboards.map((d) => (
+              <div key={d.id} className="relative group flex items-center shrink-0">
+                <DashboardTab label={d.name} active={activeDashboardId === d.id} onClick={() => setActiveDashboardId(d.id)} />
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-muted)]">
+                      <MoreHorizontal className="h-3 w-3" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={() => handleRenameDashboard(d.id, d.name)}>
+                      <Pencil className="h-3.5 w-3.5 mr-1.5" /> Rename
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem destructive onSelect={() => handleDeleteDashboard(d.id)}>
+                      <Trash2 className="h-3.5 w-3.5 mr-1.5" /> Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            ))}
+          </div>
+          {/* + button — always visible, never scrolls */}
           <button
             onClick={handleCreateDashboard}
-            className="flex items-center gap-1 px-2 py-2 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] shrink-0"
+            className="shrink-0 flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] border-l border-[var(--color-border)] hover:bg-[var(--color-muted)] transition-colors"
           >
             <Plus className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">New dashboard</span>
           </button>
         </div>
       )}
