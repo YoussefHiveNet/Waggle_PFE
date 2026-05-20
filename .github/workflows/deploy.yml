@@ -11,9 +11,10 @@ jobs:
       - name: Deploy to VPS
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
+          host: a32a814c-fca3-4750-904a-790651d4ccc6.tenants.hivecompute.ai
+          username: ubuntu
           key: ${{ secrets.VPS_SSH_KEY }}
+          port: 31041
           script: |
             set -e
             cd ~/waggle
