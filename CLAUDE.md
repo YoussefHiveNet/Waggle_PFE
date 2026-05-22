@@ -820,6 +820,82 @@ These failures were observed in a real session on the `Demo store` (DuckDB / CSV
 - `backend/agent/tools/query_tool.py` — `_resolve_cubes` fallback when 0 cubes matched
 - `backend/agent/tools/schema_tool.py` — DuckDB schema introspection queries
 
+### M8 — Cross-source linking (the "real thing")
+
+**What it is:** User opens a graph view of any two sources, draws a line between `orders.customer_id` → `customers.id`, and Waggle treats both sources as one queryable entity — semantic model, chat, and artifacts all work across the join.
+
+**Research tasks (do these first):**
+- [ ] **Research: cross-source query engine options.** Three candidates: (a) DuckDB `postgres_scanner` extension — DuckDB can directly attach a live Postgres DB and query it alongside CSV files in the same SQL; (b) materialize both sources into a shared in-memory DuckDB session on each query; (c) DuckDB `httpfs` for remote parquet. Spike: `duckdb.connect().execute("INSTALL postgres_scanner; ATTACH '...' AS pg (TYPE postgres)")` then `SELECT * FROM pg.public.orders JOIN csv_table ON ...`.
+- [ ] **Research: semantic model for cross-source joins.** Does the `Join` dataclass in `semantic/models.py` need a `source_id` field per cube, or does materialization into one DuckDB handle it transparently?
+- [ ] **Research: react-flow (@xyflow/react v12) vs d3-force** for the graph canvas — bundle size, React 19 compatibility, node drag UX.
+
+**Backend — data model:**
+- [ ] New `waggle_app.source_links` table: `(id UUID PK, user_id UUID FK, source_a_id TEXT, table_a TEXT, col_a TEXT, source_b_id TEXT, table_b TEXT, col_b TEXT, join_type TEXT DEFAULT 'LEFT', created_at)`
+- [ ] New `waggle_app.source_groups` table: `(id UUID PK, user_id UUID FK, name TEXT, source_ids TEXT[], created_at)` — virtual source combining N real sources
+- [ ] `auth/db.py` — CRUD: `create_source_link`, `list_source_links(user_id, source_id)`, `delete_source_link`, `create_source_group`, `list_source_groups`, `delete_source_group`
+
+**Backend — API:**
+- [ ] `api/routes/source_links.py` — `POST /source-links`, `GET /source-links?source_id=X`, `DELETE /source-links/{id}`
+- [ ] `api/routes/source_groups.py` — `POST /source-groups`, `GET /source-groups`, `DELETE /source-groups/{id}`
+- [ ] Register both routers in `api/main.py`
+
+**Backend — query engine:**
+- [ ] `connectors/merged.py` — opens one DuckDB `:memory:` session, attaches all sources (postgres via `postgres_scanner`, CSV as views), runs the user SQL. Same `fetch_with_config` / `extract_schema` interface as existing connectors.
+- [ ] `agent/tools/schema_tool.py` — detect `source_type: merged`, call merged extractor → combined schema dict with tables prefixed `{source_label}.{table}`
+- [ ] `agent/tools/query_tool.py` — detect `source_type: merged`, use merged connector as `fetch_fn`
+- [ ] `agent/tools/semantic_tool.py` — detect `source_type: merged`, pass combined schema + user-defined link edges as FK context to the LLM
+
+**Frontend — graph UI:**
+- [ ] Install `@xyflow/react`
+- [ ] `pages/SourceGraphPage.tsx` — route `/sources/graph`. Canvas showing all owned sources. Each source = group node; tables = child nodes; user-defined links = edges.
+- [ ] `components/graph/SourceGraph.tsx` — click column A → click column B → modal (join type) → `POST /source-links`
+- [ ] "Create combined source" button → `POST /source-groups` → new virtual source in sidebar
+- [ ] Source groups appear in `SourceSidebar` with a merge icon; chat and dashboard work identically
+
+---
+
+### M9 — SMB connector suite
+
+Every SMB has data in Shopify, Stripe, Postgres, Google Sheets, and their CRM. Waggle needs to connect all of them.
+
+**Research tasks:**
+- [ ] **Research: API-to-DuckDB materialization pattern.** Design a `BaseAPIConnector` with `fetch_pages(endpoint) → list[dict]` + `to_duckdb(conn)` — fetch paginated REST/GraphQL data, write to in-memory DuckDB tables, expose same `fetch_with_config` / `extract_schema` interface.
+- [ ] **Research: Shopify.** Admin GraphQL API. OAuth flow. Key tables: `orders`, `order_line_items`, `customers`, `products`, `inventory_levels`. Rate limit: 50 cost units/s. Use bulk operations for initial load.
+- [ ] **Research: Stripe.** REST API, cursor pagination, secret key auth (no OAuth). Key objects: `charges`, `customers`, `subscriptions`, `invoices`, `balance_transactions`.
+- [ ] **Research: Google Sheets.** Sheets API v4, service account or OAuth. Each tab = one table; first row = column names.
+- [ ] **Research: HubSpot CRM.** API v3, OAuth 2.0. Key objects: `contacts`, `companies`, `deals`. Rate limit: 100 req/10s.
+
+**Implementation (after research):**
+- [ ] `connectors/stripe.py` — fetch + materialize to DuckDB
+- [ ] `connectors/shopify.py` — GraphQL bulk export + DuckDB, OAuth callback route
+- [ ] `connectors/google_sheets.py` — service account JSON auth, each tab → DuckDB view
+- [ ] `connectors/hubspot.py` — OAuth + CRM objects → DuckDB
+- [ ] `api/routes/connect.py` — add `source_type: stripe/shopify/sheets/hubspot`
+- [ ] `frontend/AddSourceDialog.tsx` — new tabs for each connector with appropriate auth forms
+
+---
+
+### M10 — LLM query reliability
+
+From the Demo store hallucination session (2026-05-20):
+
+- [ ] `backend/agent/runtime.py:run_turn` — if LLM response contains numeric data but no tool was called, inject forced retry: "You must call the query tool to answer this."
+- [ ] `backend/agent/runtime.py:_summarize_tool_result` — include actual error message when `status != "ok"` so LLM can explain the failure instead of saying "I couldn't retrieve..."
+- [ ] `backend/agent/tools/query_tool.py:_resolve_cubes` — when 0 cubes match, fall back to full schema context so LLM can write `information_schema` / `duckdb_tables()` queries
+- [ ] `backend/agent/tools/schema_tool.py` — DuckDB-specific introspection: `duckdb_tables()`, `duckdb_columns()`, `PRAGMA table_info(name)` for "list all tables" type questions on CSV sources
+- [ ] System prompt hardening: explicit instruction "When asked about counts, totals, lists, or any data from the database, ALWAYS call the `query` tool. Never answer with data from memory or the schema description."
+
+---
+
+### M11 — Hardening & production readiness
+
+- [ ] **Error handling audit** — replace bare `except Exception: pass` in `backend/validation/engine.py:80,150` and `backend/connectors/postgres.py:149`
+- [ ] **Backend cron for `refresh_schedule`** — APScheduler background task (currently client-only `setInterval`)
+- [ ] **pytest infrastructure** — `backend/tests/`: route smoke tests + one end-to-end agent test on `waggle_demo`
+- [ ] **Env hardening** — CORS origins, SSL `verify=False`, `MAX_ATTEMPTS`, `MAX_FILE_SIZE`, validation row-limit all to env vars
+- [ ] **Artifact height control** — S/M/L height selector (200/300/500px) on cards, persisted to `layout.h`
+- [ ] **Mobile span clamp** — on `grid-cols-1`, clamp span to 1 to prevent overflow
+
 ### M6 — BigQuery connector
 - [ ] `connectors/bigquery.py` — same interface as `postgres.py`
 - [ ] Add `db_type: bigquery` support to `/connect`
@@ -915,6 +991,26 @@ That project is separate from this codebase. Lessons learned:
 ### What I'd change for production
 - (honest assessment)
 ```
+
+
+TODOLIST added by me (technical) :
+add the feature where we can add link between the uploaded sources so im thinking we add a graph representation of the tables from the source .. and then you could link a table from source A to a table from source B after that the semantic layer works and creates a semantic model for both merged sources and the user can chat with it and create artifacts from it  here is the scenario we are aiming for 
+
+That's a strong angle. Let me sharpen it.
+
+The honest positioning:
+"New Power BI" is too broad and too competitive. You'd be fighting Tableau, Looker, Metabase, and a dozen others. Investors will ask "why not just use Metabase?" and you'd lose.
+The sharper angle:
+
+Waggle is the AI analyst for SMBs who can't afford a data team.
+
+Every SMB has data scattered across Shopify, Stripe, Postgres, Google Sheets, and their CRM. They can't query it. They can't combine it. They hire a freelancer for $500 to build a dashboard that's outdated in 3 weeks.
+Waggle connects all their sources, understands their business automatically, and lets the owner ask "what were my best selling products last month in Tunis vs Sfax?" in plain English and get a live answer.
+The one-liner:
+
+"Waggle is the AI data analyst that lives inside your business — no SQL, no dashboards, no data team needed."
+
+
 
 ---
 
