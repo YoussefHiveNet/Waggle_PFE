@@ -192,3 +192,23 @@ export const semanticService = {
   get: (connectionId: string) =>
     api.get(`/semantic/${connectionId}`).then((r) => r.data),
 };
+
+// ── Schema service ────────────────────────────────────────────────────────────
+
+export const schemaService = {
+  get: (connectionId: string) =>
+    api.get<import("@/types").SchemaResponse>(`/schema/${connectionId}`).then((r) => r.data),
+};
+
+// ── Source link service ───────────────────────────────────────────────────────
+
+export const sourceLinkService = {
+  list: () =>
+    api.get<import("@/types").SourceLink[]>("/source-links").then((r) => r.data),
+
+  create: (body: import("@/types").SourceLinkCreateRequest) =>
+    api.post<import("@/types").SourceLink>("/source-links", body).then((r) => r.data),
+
+  delete: (id: string) =>
+    api.delete(`/source-links/${id}`),
+};

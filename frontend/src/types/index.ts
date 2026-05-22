@@ -207,3 +207,54 @@ export interface AuthState {
   user: User | null;
   isInitialized: boolean;
 }
+
+// ── Source links ──────────────────────────────────────────────────────────────
+
+export type JoinType = "LEFT" | "INNER";
+
+export interface SourceLink {
+  id: string;
+  user_id: string;
+  source_a_id: string;
+  table_a: string;
+  col_a: string;
+  source_b_id: string;
+  table_b: string;
+  col_b: string;
+  join_type: JoinType;
+  created_at: string;
+}
+
+export interface SourceLinkCreateRequest {
+  source_a_id: string;
+  table_a: string;
+  col_a: string;
+  source_b_id: string;
+  table_b: string;
+  col_b: string;
+  join_type: JoinType;
+}
+
+// ── Schema ────────────────────────────────────────────────────────────────────
+
+export interface SchemaColumn {
+  name: string;
+  type: string;
+  primary_key: boolean;
+  foreign_key: { foreign_table: string; foreign_column: string } | null;
+}
+
+export interface SchemaTable {
+  columns: SchemaColumn[];
+  row_count: number;
+  sample_rows?: Record<string, unknown>[];
+}
+
+export interface SchemaResponse {
+  connection_id: string;
+  label: string;
+  source_type: string;
+  tables: string[];
+  table_count: number;
+  schema: Record<string, SchemaTable>;
+}

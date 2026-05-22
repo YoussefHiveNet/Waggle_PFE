@@ -120,6 +120,25 @@ async def init_db() -> None:
             "ON waggle_app.query_logs(connection_id, created_at DESC)"
         )
 
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS waggle_app.source_links (
+                id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id       UUID NOT NULL REFERENCES waggle_app.users(id) ON DELETE CASCADE,
+                source_a_id   TEXT NOT NULL,
+                table_a       TEXT NOT NULL,
+                col_a         TEXT NOT NULL,
+                source_b_id   TEXT NOT NULL,
+                table_b       TEXT NOT NULL,
+                col_b         TEXT NOT NULL,
+                join_type     TEXT NOT NULL DEFAULT 'LEFT',
+                created_at    TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_source_links_user "
+            "ON waggle_app.source_links(user_id)"
+        )
+
 
 # ── QUERY LOG HELPERS ────────────────────────────────────────────────────────
 
@@ -455,3 +474,59 @@ def _source_row(row) -> dict:
     d["id"] = str(d["id"])
     d["user_id"] = str(d["user_id"])
     return d
+
+
+# ── SOURCE LINK HELPERS ───────────────────────────────────────────────────────
+
+def _link_row(row) -> dict:
+    d = dict(row)
+    d["id"] = str(d["id"])
+    d["user_id"] = str(d["user_id"])
+    return d
+
+
+async def create_source_link(
+    user_id: str,
+    source_a_id: str,
+    table_a: str,
+    col_a: str,
+    source_b_id: str,
+    table_b: str,
+    col_b: str,
+    join_type: str = "LEFT",
+) -> dict:
+    pool = await get_app_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO waggle_app.source_links
+                (user_id, source_a_id, table_a, col_a,
+                 source_b_id, table_b, col_b, join_type)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING *
+            """,
+            user_id, source_a_id, table_a, col_a,
+            source_b_id, table_b, col_b, join_type,
+        )
+        return _link_row(row)
+
+
+async def list_source_links(user_id: str) -> list[dict]:
+    pool = await get_app_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM waggle_app.source_links "
+            "WHERE user_id = $1 ORDER BY created_at DESC",
+            user_id,
+        )
+        return [_link_row(r) for r in rows]
+
+
+async def delete_source_link(link_id: str, user_id: str) -> bool:
+    pool = await get_app_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM waggle_app.source_links WHERE id = $1 AND user_id = $2",
+            link_id, user_id,
+        )
+        return bool(result and result.startswith("DELETE") and result != "DELETE 0")

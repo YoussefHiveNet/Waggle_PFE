@@ -8,6 +8,7 @@ import { LoginPage } from "@/pages/LoginPage";
 import { RegisterPage } from "@/pages/RegisterPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { ChatPage } from "@/pages/ChatPage";
+import { SourceGraphPage } from "@/pages/SourceGraphPage";
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
           <Route element={<DashboardLayout />}>
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/chat/:connectionId" element={<ChatPage />} />
+            <Route path="/sources/graph" element={<SourceGraphPage />} />
           </Route>
         </Route>
 

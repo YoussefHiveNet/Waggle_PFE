@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Database, FileText, MoreHorizontal, Plus, Trash2, Pencil, Sparkles } from "lucide-react";
+import { Database, FileText, MoreHorizontal, Plus, Trash2, Pencil, Sparkles, GitBranch } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuSeparator,
@@ -23,6 +23,7 @@ export function SourceSidebar({ selectedId, onSelect, className }: Props) {
   const { data: sources, isLoading } = useSources();
   const [adding, setAdding] = useState(false);
   const [onboardingId, setOnboardingId] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   return (
     <aside className={cn("hidden md:flex w-64 shrink-0 border-r border-[var(--color-border)] bg-[var(--color-card)] flex-col", className)}>
@@ -30,9 +31,18 @@ export function SourceSidebar({ selectedId, onSelect, className }: Props) {
         <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-muted-foreground)]">
           Sources
         </h2>
-        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setAdding(true)}>
-          <Plus className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-0.5">
+          <Button
+            size="icon" variant="ghost" className="h-7 w-7"
+            title="View source graph"
+            onClick={() => navigate("/sources/graph")}
+          >
+            <GitBranch className="h-4 w-4" />
+          </Button>
+          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setAdding(true)}>
+            <Plus className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-auto px-2 pb-3 [scrollbar-width:thin]">
