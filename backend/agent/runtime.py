@@ -26,6 +26,7 @@ from agent.llm import generate
 from agent.tools.query_tool import run_query
 from agent.tools.schema_tool import get_schema, format_for_llm
 from semantic.engine import SemanticEngine
+from auth.db import log_query
 
 _engine = SemanticEngine()
 
@@ -52,8 +53,8 @@ TOOLS = {
 
 def _tool_descriptions() -> str:
     lines = [
-        "AVAILABLE TOOLS — if you need data, call a tool by responding with JSON only.",
-        "If you can answer from context, respond in plain text instead.\n"
+        "AVAILABLE TOOLS — call a tool by responding with JSON only.",
+        "For any question about data, counts, totals, trends, or rows: you MUST call a tool. Do NOT answer data questions from memory or from schema descriptions.\n"
     ]
     for name, info in TOOLS.items():
         param_example = ", ".join(f'"{p}": "..."' for p in info["parameters"])
@@ -170,7 +171,8 @@ def _summarize_tool_result(tool_name: str, result: dict) -> str:
     """Concise summary to feed into the second LLM call."""
     if tool_name == "query":
         if "error" in result:
-            return f"The query failed: {result['error']}"
+            # Don't expose raw SQL errors to the synthesis LLM — keep it friendly
+            return "The data retrieval did not return results. Let the user know you were unable to retrieve the data for their question and suggest they rephrase or try a simpler question."
         data    = result.get("data", [])
         sql     = result.get("sql", "")
         conf    = result.get("confidence", 1.0)
@@ -245,6 +247,23 @@ async def run_turn(session: Session, user_message: str) -> dict:
             "result": tool_result
         })
 
+        # Log to query_logs (fire-and-forget — don't let logging errors surface to user)
+        if tool_name == "query":
+            try:
+                has_error = "error" in tool_result
+                await log_query(
+                    connection_id=connection_id,
+                    question=user_message,
+                    status="error" if has_error else "ok",
+                    session_id=session.session_id,
+                    sql_attempted=tool_result.get("sql"),
+                    error_detail=tool_result.get("error") if has_error else None,
+                    row_count=len(tool_result.get("data", [])) if not has_error else None,
+                    confidence=tool_result.get("confidence") if not has_error else None,
+                )
+            except Exception:
+                pass
+
         # Record internally — kept out of the clean history
         session.add("assistant", f"[Calling tool: {tool_name}]", tool_call=tool_call)
         session.add_tool_result(tool_name, tool_result)
@@ -268,6 +287,17 @@ async def run_turn(session: Session, user_message: str) -> dict:
     # ── 5b. Direct answer path ───────────────────────────────────────
     else:
         final_response = response_1
+        # Log when LLM answered without calling the query tool — helps identify
+        # questions that should have triggered a tool call but didn't
+        try:
+            await log_query(
+                connection_id=connection_id,
+                question=user_message,
+                status="no_tool_called",
+                session_id=session.session_id,
+            )
+        except Exception:
+            pass
 
     # ── 7. Record final response ─────────────────────────────────────
     session.add("assistant", final_response)

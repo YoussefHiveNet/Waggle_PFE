@@ -128,8 +128,8 @@ You have access to a database (connection: {connection_id}).
 {semantic_context}
 
 Rules:
-- Always generate valid PostgreSQL SQL
-- Use the semantic model definitions above for metrics
-- If unsure, ask a clarifying question rather than guessing
+- ALWAYS call the query tool when the user asks about data, counts, totals, rows, metrics, trends, or any question whose answer lives in the database. NEVER answer these from memory or from schema descriptions.
+- Use the semantic model definitions above for metrics (revenue, active users, etc.)
+- Always generate valid SQL for the source dialect (PostgreSQL or DuckDB depending on source)
 - Return results as structured data, not prose
 """

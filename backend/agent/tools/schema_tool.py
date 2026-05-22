@@ -73,7 +73,9 @@ def format_for_llm(schema: dict, max_sample_rows: int = 2) -> str:
     lines = []
 
     for table_name, table_data in schema.items():
-        lines.append(f"TABLE: {table_name}")
+        row_count = table_data.get("row_count")
+        row_info  = f" ({row_count:,} rows)" if row_count is not None else ""
+        lines.append(f"TABLE: {table_name}{row_info}")
 
         for col in table_data["columns"]:
             flags = []

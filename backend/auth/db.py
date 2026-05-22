@@ -101,6 +101,51 @@ async def init_db() -> None:
             "ADD COLUMN IF NOT EXISTS layout JSONB NOT NULL DEFAULT '{\"x\":0,\"y\":0,\"w\":2,\"h\":3}'"
         )
 
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS waggle_app.query_logs (
+                id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                connection_id  TEXT NOT NULL,
+                session_id     TEXT,
+                question       TEXT NOT NULL,
+                sql_attempted  TEXT,
+                status         TEXT NOT NULL,
+                error_detail   TEXT,
+                row_count      INTEGER,
+                confidence     FLOAT,
+                created_at     TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_query_logs_conn "
+            "ON waggle_app.query_logs(connection_id, created_at DESC)"
+        )
+
+
+# ── QUERY LOG HELPERS ────────────────────────────────────────────────────────
+
+async def log_query(
+    connection_id: str,
+    question: str,
+    status: str,
+    session_id: str | None = None,
+    sql_attempted: str | None = None,
+    error_detail: str | None = None,
+    row_count: int | None = None,
+    confidence: float | None = None,
+) -> None:
+    pool = await get_app_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO waggle_app.query_logs
+                (connection_id, session_id, question, sql_attempted,
+                 status, error_detail, row_count, confidence)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            """,
+            connection_id, session_id, question, sql_attempted,
+            status, error_detail, row_count, confidence,
+        )
+
 
 # ── USER HELPERS ──────────────────────────────────────────────────────────────
 
