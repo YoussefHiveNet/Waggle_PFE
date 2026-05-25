@@ -756,11 +756,6 @@ The 50-table schema is unchanged: HR/Org · CRM · Products · Sales · SaaS · 
 
 **🔴 Critical — blocking the Monday supervisor demo**
 
-- [ ] **LLM choice / fallback chain.** `openai/gpt-oss-20b` on the Hivenet RTX 4090 (Apr 29 launch) is too weak for Waggle:
-  - Doesn't reliably emit tool-call JSON — answers "from the records currently displayed" using only sample rows from schema context instead of actually calling the `query` tool. Example: "how many classrooms in each location" → never queried, hallucinated `2 in sub-establishment 9` straight from the schema snapshot.
-  - Validation pipeline correctly flags it (30% confidence on "revenue per day"), but UX suffers.
-  - **Action:** wire the 3-tier fallback chain planned in `/Users/youssef/.claude/plans/lucky-riding-wind.md` (Hivenet primary → OpenRouter Gemma/MiniMax secondary → Groq Llama 3.3 70B tertiary). Until that lands, comment out the Hivenet block in `backend/.env` and keep Groq as primary.
-
 - [ ] **Semantic model gen — JSON parse failure on `gpt-oss-20b`.** `backend/agent/tools/semantic_tool.py:_parse_json` blew up with `Expecting value: line 160 column 20 (char 6365)` because the LLM produced malformed JSON in the assemble step (trailing comma, comment, or `max_tokens=2048` truncation mid-object). Fixes (in order of safety):
   1. Bump `LLMConfig.max_tokens` for `semantic_tool` calls to ≥ 8192 (or move to `max_tokens=None` and rely on context window).
   2. Add a tolerant JSON repair pass (strip ``` fences, trailing commas, comments) before `json.loads`.
