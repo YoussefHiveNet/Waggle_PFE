@@ -212,3 +212,14 @@ export const sourceLinkService = {
   delete: (id: string) =>
     api.delete(`/source-links/${id}`),
 };
+
+export const sourceGroupService = {
+  list: () =>
+    api.get<import("@/types").SourceGroup[]>("/source-groups").then((r) => r.data),
+
+  create: (body: import("@/types").SourceGroupCreateRequest) =>
+    api.post<import("@/types").SourceGroup>("/source-groups", body).then((r) => r.data),
+
+  delete: (id: string) =>
+    api.delete(`/source-groups/${id}`),
+};

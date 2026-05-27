@@ -13,6 +13,10 @@ import {
 } from "@xyflow/react";
 import { SourceNode, type SourceNodeData } from "./SourceNode";
 import { LinkModal, type PendingConnection } from "./LinkModal";
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel,
+} from "@/components/ui/alert-dialog";
 import type { Source, SourceLink, SchemaResponse, JoinType } from "@/types";
 
 // Module-scope nodeTypes — reference must be stable to avoid infinite re-renders
@@ -32,6 +36,7 @@ interface Props {
 
 export function SourceGraph({ sources, schemas, savedLinks, onCreateLink, onDeleteLink }: Props) {
   const [pending, setPending] = useState<PendingConnection | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   // ── Nodes: one per source ────────────────────────────────────────────────────
   const initialNodes: Node<SourceNodeData>[] = useMemo(
@@ -61,11 +66,12 @@ export function SourceGraph({ sources, schemas, savedLinks, onCreateLink, onDele
         sourceHandle: `${link.table_a}__left`,
         target: link.source_b_id,
         targetHandle: `${link.table_b}__right`,
+        // label visible only when edge is selected (ReactFlow sets selected=true on click)
         label: `${link.col_a} → ${link.col_b} (${link.join_type})`,
-        labelStyle: { fontSize: 10, fill: "var(--color-foreground)" },
-        labelBgStyle: { fill: "var(--color-card)", fillOpacity: 0.8 },
+        labelStyle: { fontSize: 10, fill: "var(--color-foreground)", opacity: 0 },
+        labelBgStyle: { fill: "var(--color-card)", fillOpacity: 0 },
         style: { stroke: "var(--color-primary)", strokeWidth: 2 },
-        data: { linkId: link.id },
+        data: { linkId: link.id, label: `${link.col_a} → ${link.col_b} (${link.join_type})` },
       })),
     [savedLinks]
   );
@@ -171,19 +177,35 @@ export function SourceGraph({ sources, schemas, savedLinks, onCreateLink, onDele
     setPending(null);
   }
 
-  // ── Edge right-click → delete ────────────────────────────────────────────────
+  // ── Edge right-click → confirm dialog ────────────────────────────────────────
   const onEdgeContextMenu = useCallback(
     (event: React.MouseEvent, edge: Edge) => {
       event.preventDefault();
       const linkId = edge.data?.linkId;
-      if (typeof linkId === "string" && window.confirm("Delete this link?")) {
-        onDeleteLink(linkId);
-      }
+      if (typeof linkId === "string") setDeleteTarget(linkId);
     },
-    [onDeleteLink]
+    []
   );
 
-  const allEdges = [...savedEdges, ...suggestedEdges];
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+
+  // Apply label visibility based on selection state
+  const allEdges: Edge[] = useMemo(() => [
+    ...savedEdges.map((e) =>
+      e.id === selectedEdgeId
+        ? {
+            ...e,
+            labelStyle: { fontSize: 10, fill: "var(--color-foreground)", opacity: 1 },
+            labelBgStyle: { fill: "var(--color-card)", fillOpacity: 0.9 },
+          }
+        : e
+    ),
+    ...suggestedEdges,
+  ], [savedEdges, suggestedEdges, selectedEdgeId]);
+
+  const onEdgeClick = useCallback((_: React.MouseEvent, edge: Edge) => {
+    setSelectedEdgeId((prev) => (prev === edge.id ? null : edge.id));
+  }, []);
 
   return (
     <div className="w-full h-full">
@@ -193,6 +215,7 @@ export function SourceGraph({ sources, schemas, savedLinks, onCreateLink, onDele
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         onConnect={onConnect}
+        onEdgeClick={onEdgeClick}
         onEdgeContextMenu={onEdgeContextMenu}
         fitView
         fitViewOptions={{ padding: 0.25 }}
@@ -215,6 +238,33 @@ export function SourceGraph({ sources, schemas, savedLinks, onCreateLink, onDele
         onConfirm={handleConfirm}
         onCancel={() => setPending(null)}
       />
+
+      <AlertDialog open={deleteTarget !== null} onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this link?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget && savedLinks.find((l) => l.id === deleteTarget)
+                ? (() => {
+                    const l = savedLinks.find((l) => l.id === deleteTarget)!;
+                    return `${l.table_a}.${l.col_a} → ${l.table_b}.${l.col_b} (${l.join_type})`;
+                  })()
+                : "This action cannot be undone."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDeleteTarget(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (deleteTarget) onDeleteLink(deleteTarget);
+                setDeleteTarget(null);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

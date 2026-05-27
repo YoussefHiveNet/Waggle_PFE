@@ -138,6 +138,21 @@ async def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_source_links_user "
             "ON waggle_app.source_links(user_id)"
         )
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS waggle_app.source_groups (
+                id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id       UUID NOT NULL REFERENCES waggle_app.users(id) ON DELETE CASCADE,
+                label         TEXT NOT NULL,
+                source_ids    TEXT[] NOT NULL,
+                link_ids      TEXT[] NOT NULL,
+                source_id     TEXT,
+                created_at    TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_source_groups_user "
+            "ON waggle_app.source_groups(user_id)"
+        )
 
 
 # ── QUERY LOG HELPERS ────────────────────────────────────────────────────────
@@ -530,3 +545,67 @@ async def delete_source_link(link_id: str, user_id: str) -> bool:
             link_id, user_id,
         )
         return bool(result and result.startswith("DELETE") and result != "DELETE 0")
+
+
+# ── SOURCE GROUP HELPERS ──────────────────────────────────────────────────────
+
+def _group_row(row) -> dict:
+    d = dict(row)
+    d["id"] = str(d["id"])
+    d["user_id"] = str(d["user_id"])
+    return d
+
+
+async def create_source_group(
+    user_id: str,
+    label: str,
+    source_ids: list[str],
+    link_ids: list[str],
+    source_id: str | None = None,
+) -> dict:
+    pool = await get_app_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO waggle_app.source_groups
+                (user_id, label, source_ids, link_ids, source_id)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING *
+            """,
+            user_id, label, source_ids, link_ids, source_id,
+        )
+        return _group_row(row)
+
+
+async def get_source_group(group_id: str, user_id: str) -> dict | None:
+    pool = await get_app_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM waggle_app.source_groups WHERE id = $1 AND user_id = $2",
+            group_id, user_id,
+        )
+        return _group_row(row) if row else None
+
+
+async def list_source_groups(user_id: str) -> list[dict]:
+    pool = await get_app_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM waggle_app.source_groups "
+            "WHERE user_id = $1 ORDER BY created_at DESC",
+            user_id,
+        )
+        return [_group_row(r) for r in rows]
+
+
+async def delete_source_group(group_id: str, user_id: str) -> dict | None:
+    """Returns the deleted group (including its source_id) so the caller can
+    also delete the corresponding waggle_app.sources row."""
+    pool = await get_app_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "DELETE FROM waggle_app.source_groups "
+            "WHERE id = $1 AND user_id = $2 RETURNING *",
+            group_id, user_id,
+        )
+        return _group_row(row) if row else None

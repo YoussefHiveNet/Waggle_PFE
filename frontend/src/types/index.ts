@@ -23,7 +23,7 @@ export interface RegisterRequest {
 
 // ── Sources ───────────────────────────────────────────────────────────────────
 
-export type SourceType = "postgres" | "duckdb" | "bigquery";
+export type SourceType = "postgres" | "duckdb" | "bigquery" | "combined";
 
 export interface Source {
   connection_id: string;
@@ -233,6 +233,24 @@ export interface SourceLinkCreateRequest {
   table_b: string;
   col_b: string;
   join_type: JoinType;
+}
+
+export interface SourceGroup {
+  id: string;
+  user_id: string;
+  label: string;
+  source_ids: string[];
+  link_ids: string[];
+  source_id: string | null;
+  created_at: string;
+  source?: Source;
+}
+
+export interface SourceGroupCreateRequest {
+  label: string;
+  source_ids: string[];
+  link_ids: string[];
+  links: SourceLink[];
 }
 
 // ── Schema ────────────────────────────────────────────────────────────────────

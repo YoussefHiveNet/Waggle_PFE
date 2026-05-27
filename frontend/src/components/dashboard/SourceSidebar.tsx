@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Database, FileText, MoreHorizontal, Plus, Trash2, Pencil, Sparkles, GitBranch } from "lucide-react";
+import { Database, FileText, GitMerge, MoreHorizontal, Plus, Trash2, Pencil, Sparkles, GitBranch } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuSeparator,
@@ -96,7 +96,9 @@ function SourceRow({
   const navigate = useNavigate();
   const deleteSource = useDeleteSource();
   const renameSource = useRenameSource();
-  const Icon = source.source_type === "postgres" ? Database : FileText;
+  const Icon = source.source_type === "postgres" ? Database
+             : source.source_type === "combined"  ? GitMerge
+             : FileText;
 
   function handleRename() {
     const next = window.prompt("Rename source", source.label);

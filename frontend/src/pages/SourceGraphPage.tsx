@@ -1,16 +1,18 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, GitBranch } from "lucide-react";
+import { ArrowLeft, GitBranch, GitMerge } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSources } from "@/hooks/useSources";
 import { useSourceLinks, useCreateSourceLink, useDeleteSourceLink, useSourceSchemas } from "@/hooks/useSourceLinks";
 import { SourceGraph } from "@/components/graph/SourceGraph";
+import { CreateCombinedSourceDialog } from "@/components/graph/CreateCombinedSourceDialog";
 import { toast } from "@/hooks/useToast";
 import type { JoinType, SchemaResponse } from "@/types";
 
 export function SourceGraphPage() {
   const navigate = useNavigate();
+  const [showCombineDialog, setShowCombineDialog] = useState(false);
   const { data: sources = [], isLoading: sourcesLoading } = useSources();
   const { data: savedLinks = [], isLoading: linksLoading } = useSourceLinks();
   const createLink = useCreateSourceLink();
@@ -63,8 +65,18 @@ export function SourceGraphPage() {
               ` · ${savedLinks.length} link${savedLinks.length !== 1 ? "s" : ""}`}
           </span>
         )}
-        <div className="ml-auto text-xs text-[var(--color-muted-foreground)] hidden sm:block">
-          Drag from a table handle to link two sources
+        <div className="ml-auto flex items-center gap-2">
+          <span className="text-xs text-[var(--color-muted-foreground)] hidden sm:block">
+            Drag from a table handle to link two sources
+          </span>
+          <Button
+            size="sm"
+            disabled={savedLinks.length === 0}
+            onClick={() => setShowCombineDialog(true)}
+          >
+            <GitMerge className="h-3.5 w-3.5 mr-1.5" />
+            Create combined source
+          </Button>
         </div>
       </div>
 
@@ -101,6 +113,13 @@ export function SourceGraphPage() {
           />
         )}
       </div>
+
+      <CreateCombinedSourceDialog
+        open={showCombineDialog}
+        onOpenChange={setShowCombineDialog}
+        sources={sources}
+        links={savedLinks}
+      />
     </div>
   );
 }

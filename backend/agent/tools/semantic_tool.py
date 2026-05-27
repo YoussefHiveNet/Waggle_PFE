@@ -130,6 +130,14 @@ async def generate_semantic_model(
     fks = get_foreign_keys(schema)
     print(f"[SEM] fk count={len(fks)}", flush=True)
 
+    # For combined sources, extract user-drawn link hints for the LLM
+    _cross_join_hints = ""
+    from connectors.store import get_source as _get_source
+    _src = await _get_source(connection_id)
+    if _src and _src.get("source_type") == "combined":
+        from connectors.merged import build_join_hint
+        _cross_join_hints = build_join_hint(_src["config"].get("links", []))
+
     # Step 2: classify columns per table
     classifications = {}
     for table_name, table_data in schema.items():
@@ -189,6 +197,8 @@ async def generate_semantic_model(
         f"{fk['to_table']}.{fk['to_column']}"
         for fk in fks
     ])
+    if _cross_join_hints:
+        fk_text = (fk_text + "\n" + _cross_join_hints).strip()
     rules_text = "\n".join([
         f"- {k}: {v}" for k, v in business_rules.items()
     ])
@@ -338,6 +348,23 @@ async def _assemble_per_cube(
     return {"cubes": cubes, "assertions": []}
 
 
+_DIM_ALIASES: dict[str, str] = {
+    "bool": "boolean", "bool_": "boolean",
+    "int": "number", "integer": "number", "float": "number",
+    "decimal": "number", "numeric": "number", "double": "number",
+    "timestamp": "time", "date": "time", "datetime": "time",
+    "text": "string", "varchar": "string", "char": "string",
+}
+_MEASURE_ALIASES: dict[str, str] = {
+    "integer": "number", "float": "number", "numeric": "number",
+}
+
+def _norm_dim(t: str) -> str:
+    return _DIM_ALIASES.get(t.lower().strip(), t.lower().strip())
+
+def _norm_measure(t: str) -> str:
+    return _MEASURE_ALIASES.get(t.lower().strip(), t.lower().strip())
+
 def _dict_to_model(d: dict) -> SemanticModel:
     cubes = []
     for c in d.get("cubes", []):
@@ -349,24 +376,30 @@ def _dict_to_model(d: dict) -> SemanticModel:
             )
             for j in c.get("joins", [])
         ]
-        dimensions = [
-            Dimension(
+        dimensions = []
+        for dim in c.get("dimensions", []):
+            try:
+                dim_type = DimensionType(_norm_dim(dim.get("type", "string")))
+            except ValueError:
+                dim_type = DimensionType.STRING
+            dimensions.append(Dimension(
                 name=dim["name"],
                 sql=dim["sql"],
-                type=DimensionType(dim.get("type", "string")),
+                type=dim_type,
                 description=dim.get("description", "")
-            )
-            for dim in c.get("dimensions", [])
-        ]
-        measures = [
-            Measure(
+            ))
+        measures = []
+        for m in c.get("measures", []):
+            try:
+                msr_type = MeasureType(_norm_measure(m.get("type", "sum")))
+            except ValueError:
+                msr_type = MeasureType.NUMBER
+            measures.append(Measure(
                 name=m["name"],
                 sql=m["sql"],
-                type=MeasureType(m.get("type", "sum")),
+                type=msr_type,
                 description=m.get("description", "")
-            )
-            for m in c.get("measures", [])
-        ]
+            ))
         cubes.append(Cube(
             name=c["name"],
             sql_table=c["sql_table"],

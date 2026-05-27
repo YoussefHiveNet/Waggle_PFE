@@ -81,6 +81,26 @@ class SemanticEngine:
 
     # ── PARSE ─────────────────────────────────────────────────────────
 
+    _DIM_ALIASES: dict[str, str] = {
+        "bool": "boolean", "bool_": "boolean",
+        "int": "number", "integer": "number", "float": "number",
+        "decimal": "number", "numeric": "number", "double": "number",
+        "timestamp": "time", "date": "time", "datetime": "time",
+        "text": "string", "varchar": "string", "char": "string",
+    }
+    _MEASURE_ALIASES: dict[str, str] = {
+        "count_distinct": "count_distinct",
+        "integer": "number", "float": "number", "numeric": "number",
+    }
+
+    def _norm_dim_type(self, raw_type: str) -> str:
+        t = raw_type.lower().strip()
+        return self._DIM_ALIASES.get(t, t)
+
+    def _norm_measure_type(self, raw_type: str) -> str:
+        t = raw_type.lower().strip()
+        return self._MEASURE_ALIASES.get(t, t)
+
     def _parse_model(self, raw: dict) -> SemanticModel:
         cubes      = [self._parse_cube(c) for c in raw.get("cubes", [])]
         assertions = raw.get("assertions", [])
@@ -95,25 +115,31 @@ class SemanticEngine:
             )
             for j in raw.get("joins", [])
         ]
-        dimensions = [
-            Dimension(
+        dimensions = []
+        for d in raw.get("dimensions", []):
+            try:
+                dim_type = DimensionType(self._norm_dim_type(d.get("type", "string")))
+            except ValueError:
+                dim_type = DimensionType.STRING
+            dimensions.append(Dimension(
                 name=d["name"],
                 sql=d["sql"],
-                type=DimensionType(d.get("type", "string")),
+                type=dim_type,
                 description=d.get("description", ""),
                 primary_key=d.get("primary_key", False)
-            )
-            for d in raw.get("dimensions", [])
-        ]
-        measures = [
-            Measure(
+            ))
+        measures = []
+        for m in raw.get("measures", []):
+            try:
+                msr_type = MeasureType(self._norm_measure_type(m.get("type", "sum")))
+            except ValueError:
+                msr_type = MeasureType.NUMBER
+            measures.append(Measure(
                 name=m["name"],
                 sql=m["sql"],
-                type=MeasureType(m.get("type", "sum")),
+                type=msr_type,
                 description=m.get("description", "")
-            )
-            for m in raw.get("measures", [])
-        ]
+            ))
         return Cube(
             name=raw["name"],
             sql_table=raw["sql_table"],

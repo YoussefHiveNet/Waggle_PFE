@@ -56,6 +56,9 @@ async def get_schema(connection_id: str, force_refresh: bool = False) -> dict:
         schema = extract_schema_from_file(cfg["file_path"], display_name=display_name)
     elif source_type == "postgres":
         schema = await extract_schema(cfg)
+    elif source_type == "combined":
+        from connectors.merged import extract_schema as merged_extract_schema
+        schema = await merged_extract_schema(cfg)
     else:
         raise ValueError(f"Unsupported source_type: {source_type}")
 

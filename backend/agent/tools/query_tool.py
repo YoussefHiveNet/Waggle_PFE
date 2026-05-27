@@ -78,7 +78,13 @@ async def run_query(connection_id: str, question: str) -> dict:
 
     config      = source["config"]
     source_type = source["source_type"]
-    fetch_fn    = _duck_fetch if source_type == "duckdb" else _pg_fetch
+    if source_type == "duckdb":
+        fetch_fn = _duck_fetch
+    elif source_type == "combined":
+        from connectors.merged import fetch_with_config as _merged_fetch
+        async def fetch_fn(cfg, sql): return await _merged_fetch(cfg, sql)
+    else:
+        fetch_fn = _pg_fetch
 
     schema = await get_schema(connection_id)
 

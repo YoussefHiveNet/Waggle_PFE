@@ -15,7 +15,8 @@ from api.routes.auth      import router as auth_router
 from api.routes.artifacts  import router as artifacts_router
 from api.routes.sources    import router as sources_router
 from api.routes.dashboards    import router as dashboards_router
-from api.routes.source_links  import router as source_links_router
+from api.routes.source_links   import router as source_links_router
+from api.routes.source_groups  import router as source_groups_router
 
 
 @asynccontextmanager
@@ -44,6 +45,7 @@ app.include_router(semantic_router)
 app.include_router(query_router)
 app.include_router(session_router)
 app.include_router(source_links_router)
+app.include_router(source_groups_router)
 
 
 @app.get("/health")

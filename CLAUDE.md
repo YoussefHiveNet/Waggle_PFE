@@ -879,12 +879,15 @@ From the Demo store hallucination session (2026-05-20):
 - [ ] `backend/agent/tools/query_tool.py:_resolve_cubes` — when 0 cubes match, fall back to full schema context so LLM can write `information_schema` / `duckdb_tables()` queries
 - [ ] `backend/agent/tools/schema_tool.py` — DuckDB-specific introspection: `duckdb_tables()`, `duckdb_columns()`, `PRAGMA table_info(name)` for "list all tables" type questions on CSV sources
 - [ ] System prompt hardening: explicit instruction "When asked about counts, totals, lists, or any data from the database, ALWAYS call the `query` tool. Never answer with data from memory or the schema description."
+- [ ] **UI (2026-05-27): Hide auto-suggestion toggle on Source Graph** — dashed suggested edges appear automatically; the recommendations button/toggle should be hidden until suggestion quality is reliable enough to surface to users.
+- [ ] **BUG (2026-05-27): LLM fails "revenue per month" queries** — scalar revenue (`SUM`) works fine but any GROUP BY month query returns the generic fallback. LLM calls query tool for `orders per month` but not for `revenue per month`. Fix: add `DATE_TRUNC` / time-bucketing examples to the system prompt; ensure the semantic model's revenue measure definition doesn't confuse the LLM into thinking it already has the answer.
 
 ---
 
 ### M11 — Hardening & production readiness
 
 - [ ] **Error handling audit** — replace bare `except Exception: pass` in `backend/validation/engine.py:80,150` and `backend/connectors/postgres.py:149`
+- [ ] **Structured error logging (2026-05-27)** — all features (semantic generation, query tool, artifact execute, source upload, auth) should write failures to a central log: feature name + user_id + source_id + timestamp + error message + stack trace. Currently errors either silently swallow or only appear in the uvicorn console with no way to query them per user.
 - [ ] **Backend cron for `refresh_schedule`** — APScheduler background task (currently client-only `setInterval`)
 - [ ] **pytest infrastructure** — `backend/tests/`: route smoke tests + one end-to-end agent test on `waggle_demo`
 - [ ] **Env hardening** — CORS origins, SSL `verify=False`, `MAX_ATTEMPTS`, `MAX_FILE_SIZE`, validation row-limit all to env vars
