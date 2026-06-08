@@ -100,6 +100,7 @@ async def extract_schema(config: dict) -> dict:
                         "columns":     columns,
                         "row_count":   row_count,
                         "sample_rows": sample_rows,
+                        "sql_name":    qualified,
                     }
                 except Exception:
                     # Table may be a view or temporarily unavailable — skip gracefully
@@ -132,16 +133,27 @@ def _apply_link_hints(columns: list[dict], display_key: str, links: list[dict]) 
 
 
 def build_join_hint(links: list[dict]) -> str:
-    """Return a compact natural-language block describing the cross-source joins.
-    Injected into the LLM system prompt so it knows how to write JOINs.
+    """Return SQL-formatted JOIN instructions from user-drawn links.
+    Injected into the LLM prompt so it writes correct qualified JOIN syntax.
+    display_key format (waggle_nyc.customers) → SQL format ("waggle_nyc".public."customers").
     """
     if not links:
         return ""
-    lines = ["CROSS-SOURCE JOINS — use these when joining across sources:"]
+
+    def to_sql(display_key: str) -> str:
+        """Convert 'alias.table' display key to DuckDB-qualified SQL name."""
+        parts = display_key.split(".", 1)
+        if len(parts) == 2:
+            # Postgres sources are attached as alias.public.table in DuckDB
+            return f'"{parts[0]}".public."{parts[1]}"'
+        return f'"{display_key}"'
+
+    lines = ["CROSS-SOURCE JOINS — use these exact SQL names:"]
     for lk in links:
+        sql_a = to_sql(lk["table_a"])
+        sql_b = to_sql(lk["table_b"])
         lines.append(
-            f"  {lk['table_a']}.{lk['col_a']} "
-            f"{lk['join_type']} JOIN {lk['table_b']} "
-            f"ON {lk['table_a']}.{lk['col_a']} = {lk['table_b']}.{lk['col_b']}"
+            f"  {sql_a} {lk['join_type']} JOIN {sql_b} "
+            f"ON <alias_a>.{lk['col_a']} = <alias_b>.{lk['col_b']}"
         )
     return "\n".join(lines)

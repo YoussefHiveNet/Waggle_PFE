@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { extractError, queryService } from "@/lib/api";
+import { extractError, queryService, sessionService } from "@/lib/api";
 import type { QueryToolResult, ToolCall } from "@/types";
 import { toast } from "@/hooks/useToast";
 
@@ -97,7 +97,59 @@ export function useChat(connectionId: string, initialSessionId?: string) {
     setState({ messages: [], sessionId: null, sending: false });
   }, []);
 
-  return { ...state, send, reset };
+  const loadSession = useCallback(async (sessionId: string) => {
+    try {
+      const data = await sessionService.get(sessionId);
+      const msgs = data.messages as Array<{
+        role: string;
+        content: string;
+        tool_name?: string;
+        result?: unknown;
+      }>;
+
+      const chatMessages: ChatMessage[] = [];
+      for (let i = 0; i < msgs.length; i++) {
+        const m = msgs[i];
+        if (m.role === "user") {
+          chatMessages.push({
+            id: crypto.randomUUID(),
+            role: "user",
+            content: m.content,
+          });
+        } else if (
+          m.role === "assistant" &&
+          !m.content.startsWith("[Calling tool") &&
+          !m.content.startsWith("[Tool result]")
+        ) {
+          // Find nearest preceding tool result within the same turn
+          let toolCall: ToolCall | undefined;
+          for (let j = i - 1; j >= 0; j--) {
+            if (msgs[j].role === "tool") {
+              toolCall = {
+                tool: (msgs[j].tool_name ?? "query") as "query" | "get_schema",
+                params: {},
+                result: msgs[j].result as QueryToolResult,
+              };
+              break;
+            }
+            if (msgs[j].role === "user") break;
+          }
+          chatMessages.push({
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: m.content,
+            toolCall,
+          });
+        }
+      }
+
+      setState({ messages: chatMessages, sessionId, sending: false });
+    } catch (err) {
+      toast({ variant: "destructive", description: extractError(err) });
+    }
+  }, []);
+
+  return { ...state, send, reset, loadSession };
 }
 
 /** Pull the underlying query result out of a tool call, if it has one. */

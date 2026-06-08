@@ -39,14 +39,20 @@ async def get_schema(connection_id: str, force_refresh: bool = False) -> dict:
     Dispatches on source_type so postgres goes through asyncpg
     and duckdb (file uploads) goes through the in-process reader.
     """
-    if not force_refresh:
+    source = await get_source(connection_id)
+
+    # Combined sources are never served from cache — their sql_name fields must
+    # be recomputed each time because the DuckDB qualified names depend on the
+    # live component source configs (which may change).
+    is_combined = source and source.get("source_type") == "combined"
+
+    if not source:
+        raise ValueError(f"Source {connection_id} not found")
+
+    if not force_refresh and not is_combined:
         cached = _load_cache(connection_id)
         if cached:
             return cached
-
-    source = await get_source(connection_id)
-    if not source:
-        raise ValueError(f"Source {connection_id} not found")
 
     cfg         = source["config"]
     source_type = source["source_type"]
@@ -78,7 +84,9 @@ def format_for_llm(schema: dict, max_sample_rows: int = 2) -> str:
     for table_name, table_data in schema.items():
         row_count = table_data.get("row_count")
         row_info  = f" ({row_count:,} rows)" if row_count is not None else ""
-        lines.append(f"TABLE: {table_name}{row_info}")
+        sql_name  = table_data.get("sql_name")
+        sql_hint  = f"  [SQL: {sql_name}]" if sql_name else ""
+        lines.append(f"TABLE: {table_name}{row_info}{sql_hint}")
 
         for col in table_data["columns"]:
             flags = []

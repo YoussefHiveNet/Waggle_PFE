@@ -22,6 +22,14 @@ async def generate_semantic(
     body: SemanticGenerateRequest = SemanticGenerateRequest(),
     _source: dict = Depends(require_source),
 ):
+    if _source.get("source_type") == "combined":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Semantic models are not supported for combined sources — "
+                "the merged schema is used directly for query generation."
+            ),
+        )
     try:
         result = await generate_semantic_model(
             connection_id, business_rules=body.business_rules,

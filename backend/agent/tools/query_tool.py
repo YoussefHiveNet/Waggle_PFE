@@ -21,8 +21,9 @@ Why accumulate errors across attempts:
 import sqlglot
 from typing import Optional
 
-from agent.llm import generate
+from agent.llm import generate_text as generate
 from agent.tools.schema_tool import get_schema, format_for_llm
+from agent.debug_log import log
 from connectors.postgres import fetch_with_config as _pg_fetch
 from connectors.duckdb import fetch_with_config as _duck_fetch
 # Re-exported for backwards compatibility — old callers used _serialize_rows
@@ -35,7 +36,7 @@ from validation.engine import validate
 MAX_ATTEMPTS = 3
 _engine = SemanticEngine()
 
-_SQL_SYSTEM = "You are a PostgreSQL expert. Generate precise, minimal SELECT queries."
+_SQL_SYSTEM = "You are a SQL expert. Generate precise, minimal SELECT queries."
 
 _SQL_PROMPT = """\
 Semantic model — use these definitions for aggregations and filters:
@@ -44,7 +45,7 @@ Semantic model — use these definitions for aggregations and filters:
 Database schema:
 {schema_context}
 
-Question: {question}{error_section}
+Question: {question}{cross_source_hint}{error_section}
 
 Rules:
 - Return ONLY the SQL query — no explanation, no markdown fences
@@ -52,6 +53,38 @@ Rules:
 - Always alias tables (e.g. SELECT o.amount FROM orders o)
 - Never use SELECT *
 - Use the semantic model metric expressions verbatim where applicable"""
+
+_CROSS_SOURCE_FEW_SHOT = """
+
+CROSS-SOURCE SQL RULES:
+- Use the exact [SQL: ...] name shown in the schema for every table reference
+- Always alias every table to avoid ambiguous column references across sources
+- Postgres sources: "alias".public."table"  |  DuckDB/file sources: "alias"."table"
+
+EXAMPLES:
+-- Count from one source:
+SELECT COUNT(*) AS order_count
+FROM "store1".public."orders" o;
+
+-- Common rows between same-schema sources (overlap by shared natural key):
+SELECT c1.first_name, c1.last_name, c1.email,
+       c1.loyalty_pts AS store1_pts, c2.loyalty_pts AS store2_pts
+FROM "store1".public."customers" c1
+INNER JOIN "store2".public."customers" c2 ON c1.email = c2.email
+ORDER BY c1.last_name;
+
+-- Aggregation joining across both sources on shared SKU:
+SELECT p1.sku, p1.name,
+       COALESCE(SUM(oi1.quantity * oi1.unit_price), 0) AS store1_revenue,
+       COALESCE(SUM(oi2.quantity * oi2.unit_price), 0) AS store2_revenue
+FROM "store1".public."products" p1
+LEFT JOIN "store1".public."order_items" oi1 ON oi1.product_id = p1.id
+LEFT JOIN "store2".public."products" p2 ON p1.sku = p2.sku
+LEFT JOIN "store2".public."order_items" oi2 ON oi2.product_id = p2.id
+GROUP BY p1.sku, p1.name
+ORDER BY store1_revenue + store2_revenue DESC
+LIMIT 10;
+"""
 
 
 # ── MAIN ENTRY POINT ──────────────────────────────────────────────────────
@@ -88,6 +121,14 @@ async def run_query(connection_id: str, question: str) -> dict:
 
     schema = await get_schema(connection_id)
 
+    # Fetch user-drawn join hints for combined sources
+    join_hints = ""
+    if source_type == "combined":
+        from connectors.merged import build_join_hint
+        join_hints = build_join_hint(config.get("links", []))
+
+    log("SQL:CONTEXT", f"source_type={source_type}  tables={list(schema.keys())[:6]}  join_hints_len={len(join_hints)}")
+
     try:
         model: Optional[SemanticModel] = _engine.load(connection_id)
     except FileNotFoundError:
@@ -96,12 +137,13 @@ async def run_query(connection_id: str, question: str) -> dict:
     errors: list[str] = []
 
     for attempt in range(MAX_ATTEMPTS):
-        sql = await _generate_sql(schema, model, question, errors)
+        sql = await _generate_sql(schema, model, question, errors, join_hints=join_hints)
 
         # Syntax check — free, catches obvious LLM mistakes before a DB round-trip
         try:
             sqlglot.parse_one(sql, dialect="postgres")
         except Exception as e:
+            log("SQL:ERROR", f"attempt={attempt + 1}  syntax: {e}")
             errors.append(f"[attempt {attempt + 1}] Syntax error: {e}")
             continue
 
@@ -109,6 +151,7 @@ async def run_query(connection_id: str, question: str) -> dict:
         try:
             raw_data = await fetch_fn(config, sql)
         except Exception as e:
+            log("SQL:ERROR", f"attempt={attempt + 1}  db: {e}")
             errors.append(f"[attempt {attempt + 1}] DB error: {e}")
             continue
 
@@ -144,17 +187,31 @@ async def run_query(connection_id: str, question: str) -> dict:
 
 # ── SQL GENERATION ────────────────────────────────────────────────────────
 
+def _is_combined_schema(schema: dict) -> bool:
+    """True when schema keys are alias-prefixed (e.g. 'nyc.orders') — a combined source."""
+    return any("." in k for k in schema)
+
+
 async def _generate_sql(
     schema: dict,
     model: Optional[SemanticModel],
     question: str,
     errors: list[str],
+    join_hints: str = "",
 ) -> str:
     if model:
         relevant     = _resolve_cubes(model, question)
         semantic_ctx = _engine.build_llm_context(model, relevant)
     else:
         semantic_ctx = "(no semantic model — derive intent directly from schema)"
+
+    cross_source_hint = ""
+    if _is_combined_schema(schema):
+        join_block = (
+            "\n\nUSER-DEFINED JOINS (drawn in the graph — use these exactly):\n"
+            + join_hints + "\n"
+        ) if join_hints else ""
+        cross_source_hint = join_block + _CROSS_SOURCE_FEW_SHOT
 
     error_section = ""
     if errors:
@@ -166,11 +223,17 @@ async def _generate_sql(
         semantic_context=semantic_ctx,
         schema_context=format_for_llm(schema, max_sample_rows=1),
         question=question,
+        cross_source_hint=cross_source_hint,
         error_section=error_section,
     )
 
+    log("SQL:PROMPT", f"is_combined={_is_combined_schema(schema)}  join_hints_len={len(join_hints)}")
+    log("SQL:PROMPT", "prompt_preview:", prompt[:800])
+
     response = await generate(prompt, system=_SQL_SYSTEM)
-    return _clean_sql(response)
+    sql = _clean_sql(response)
+    log("SQL:RESULT", f"sql={sql[:300]}")
+    return sql
 
 
 # ── HELPERS ───────────────────────────────────────────────────────────────

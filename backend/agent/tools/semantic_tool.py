@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 import json
 import re
-from agent.llm import generate
+from agent.llm import generate_text as generate
 from agent.tools.schema_tool import get_schema, format_for_llm, get_foreign_keys
 from semantic.engine import SemanticEngine
 from semantic.models import (

@@ -253,6 +253,16 @@ export interface SourceGroupCreateRequest {
   links: SourceLink[];
 }
 
+// ── Chat sessions ─────────────────────────────────────────────────────────────
+
+export interface ChatSession {
+  session_id: string;
+  connection_id: string;
+  message_count: number;
+  first_message: string;
+  created_at: number | null; // unix timestamp
+}
+
 // ── Schema ────────────────────────────────────────────────────────────────────
 
 export interface SchemaColumn {

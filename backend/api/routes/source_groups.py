@@ -32,16 +32,29 @@ async def create_group(
         if not src:
             raise HTTPException(status_code=404, detail=f"Source {sid} not found")
         component_sources.append({
-            "connection_id": sid,
-            "source_type":   src["source_type"],
-            "config":        src["config"],
-            "alias":         src["label"].replace(" ", "_").lower(),
+            "source_id":   sid,
+            "source_type": src["source_type"],
+            "config":      src["config"],
+            "alias":       src["label"].replace(" ", "_").lower(),
+        })
+
+    # Qualify link table names with their source alias so _apply_link_hints()
+    # and build_join_hint() can match against display_key (e.g. "waggle_nyc.customers")
+    alias_map = {src["source_id"]: src["alias"] for src in component_sources}
+    qualified_links = []
+    for lk in body.links:
+        a_alias = alias_map.get(lk.get("source_a_id", ""), "")
+        b_alias = alias_map.get(lk.get("source_b_id", ""), "")
+        qualified_links.append({
+            **lk,
+            "table_a": f"{a_alias}.{lk['table_a']}" if a_alias else lk["table_a"],
+            "table_b": f"{b_alias}.{lk['table_b']}" if b_alias else lk["table_b"],
         })
 
     # Build combined source config
     config = {
         "component_sources": component_sources,
-        "links": body.links,
+        "links": qualified_links,
     }
 
     # Create the sources row so it appears in the sidebar

@@ -35,3 +35,5 @@ frontend/.env.*.local
 .env
 keys
 history
+*.md
+Template Rapport ESPRIT (PFE)/

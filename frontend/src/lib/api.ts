@@ -193,6 +193,20 @@ export const semanticService = {
     api.get(`/semantic/${connectionId}`).then((r) => r.data),
 };
 
+// ── Session service ───────────────────────────────────────────────────────────
+
+export const sessionService = {
+  list: (connectionId: string) =>
+    api
+      .get<{ sessions: import("@/types").ChatSession[] }>(`/sessions?connection_id=${connectionId}`)
+      .then((r) => r.data.sessions),
+
+  get: (sessionId: string) =>
+    api
+      .get<{ messages: Record<string, unknown>[]; session_id: string }>(`/session/${sessionId}`)
+      .then((r) => r.data),
+};
+
 // ── Schema service ────────────────────────────────────────────────────────────
 
 export const schemaService = {

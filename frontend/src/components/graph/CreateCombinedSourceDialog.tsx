@@ -31,9 +31,13 @@ export function CreateCombinedSourceDialog({ open, onOpenChange, sources, links 
 
   const [label, setLabel] = useState(defaultLabel);
 
+  const sourceIdSet = new Set(sources.map((s) => s.connection_id));
+  const validLinks = links.filter(
+    (l) => sourceIdSet.has(l.source_a_id) && sourceIdSet.has(l.source_b_id)
+  );
   const sourceIds = [...new Set([
-    ...links.map((l) => l.source_a_id),
-    ...links.map((l) => l.source_b_id),
+    ...validLinks.map((l) => l.source_a_id),
+    ...validLinks.map((l) => l.source_b_id),
   ])];
 
   async function handleCreate() {
@@ -41,8 +45,8 @@ export function CreateCombinedSourceDialog({ open, onOpenChange, sources, links 
       const group = await createGroup.mutateAsync({
         label,
         source_ids: sourceIds,
-        link_ids: links.map((l) => l.id),
-        links,
+        link_ids: validLinks.map((l) => l.id),
+        links: validLinks,
       });
       onOpenChange(false);
       if (group.source?.connection_id) {
@@ -77,9 +81,9 @@ export function CreateCombinedSourceDialog({ open, onOpenChange, sources, links 
           </div>
 
           <div className="space-y-1.5">
-            <Label>Links included ({links.length})</Label>
+            <Label>Links included ({validLinks.length})</Label>
             <ul className="text-xs text-[var(--color-muted-foreground)] space-y-1 max-h-40 overflow-y-auto">
-              {links.map((l) => (
+              {validLinks.map((l) => (
                 <li key={l.id} className="font-mono bg-[var(--color-muted)] rounded px-2 py-1">
                   {l.table_a}.{l.col_a} {l.join_type} JOIN {l.table_b} ON {l.col_a} = {l.col_b}
                 </li>
@@ -94,7 +98,7 @@ export function CreateCombinedSourceDialog({ open, onOpenChange, sources, links 
           </Button>
           <Button
             onClick={handleCreate}
-            disabled={!label.trim() || createGroup.isPending}
+            disabled={!label.trim() || validLinks.length === 0 || createGroup.isPending}
           >
             {createGroup.isPending ? "Creating…" : "Create & open chat"}
           </Button>

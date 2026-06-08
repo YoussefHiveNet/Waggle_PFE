@@ -108,11 +108,20 @@ class Session:
     # ── SUMMARY ────────────────────────────────────────────────────────
 
     def summary(self) -> dict:
+        first_message = ""
+        created_at = None
+        for msg in self._messages:
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
+                first_message = content[:80] + ("…" if len(content) > 80 else "")
+                created_at = msg.get("ts")
+                break
         return {
             "session_id":    self.session_id,
             "connection_id": self.connection_id,
             "message_count": len(self._messages),
-            "path":          str(self.path)
+            "first_message": first_message,
+            "created_at":    created_at,
         }
 
 

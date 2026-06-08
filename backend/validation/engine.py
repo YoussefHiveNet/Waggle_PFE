@@ -170,7 +170,7 @@ async def _check_cross_query(
 
     checks.append("cross_query")
     try:
-        from agent.llm import generate
+        from agent.llm import generate_text as generate
 
         count_prompt = (
             f"Write a simple COUNT(*) SQL query that counts the rows relevant to: "
@@ -203,7 +203,7 @@ async def _check_llm_sanity(
 ) -> None:
     checks.append("llm_sanity")
     try:
-        from agent.llm import generate
+        from agent.llm import generate_text as generate
 
         sample = data[:3]
         prompt = (

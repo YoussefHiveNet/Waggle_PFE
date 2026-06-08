@@ -874,8 +874,8 @@ Every SMB has data in Shopify, Stripe, Postgres, Google Sheets, and their CRM. W
 
 From the Demo store hallucination session (2026-05-20):
 
-- [ ] `backend/agent/runtime.py:run_turn` — if LLM response contains numeric data but no tool was called, inject forced retry: "You must call the query tool to answer this."
-- [ ] `backend/agent/runtime.py:_summarize_tool_result` — include actual error message when `status != "ok"` so LLM can explain the failure instead of saying "I couldn't retrieve..."
+- ✅ `backend/agent/runtime.py:run_turn` — `_looks_hallucinated()` added + correction injection strengthened (2026-05-29). **OR vs AND decision still open — see Day 16 pending.**
+- ✅ `backend/agent/runtime.py:_summarize_tool_result` — explicit "DO NOT make up numbers" added to failure path (2026-05-29).
 - [ ] `backend/agent/tools/query_tool.py:_resolve_cubes` — when 0 cubes match, fall back to full schema context so LLM can write `information_schema` / `duckdb_tables()` queries
 - [ ] `backend/agent/tools/schema_tool.py` — DuckDB-specific introspection: `duckdb_tables()`, `duckdb_columns()`, `PRAGMA table_info(name)` for "list all tables" type questions on CSV sources
 - [ ] System prompt hardening: explicit instruction "When asked about counts, totals, lists, or any data from the database, ALWAYS call the `query` tool. Never answer with data from memory or the schema description."
@@ -1012,4 +1012,80 @@ The one-liner:
 
 ---
 
-*Last updated: 2026-05-19 — Day 13 big-day + Day 14 polish complete. Shipped: multiple dashboards per source (tab bar, CRUD, SaveArtifactDialog picker); draggable/resizable artifact tiles (react-grid-layout v2, layout JSONB, debounced PATCH); production-safe data paths (DataPaths class); semantic parse hardening; responsive/mobile audit. Polish: ResizeObserver timing fix; layout closure staling fixed (filteredRef pattern); rglLayout memoized; horizontalCompactor (no gaps on resize); selected source persisted in localStorage; chat page h-[100dvh] chain fixed (message list scrolls internally); setQueriesData cache patch (no layout snap); code quality sweep (import json, DELETE check, unsupported source type 400, extractError, SaveArtifactDialog try/catch). `pnpm tsc --noEmit` clean. Open: LLM fallback chain, backend cron for refresh_schedule, BigQuery connector.*
+### Day 16 — Cross-source chat fixes + Chat history UI (2026-05-29)
+
+**Branch:** `feat/Graph-sources`
+
+**What was fixed:**
+
+**Bug: `[TOOL_CALLS]` leaked as raw text in chat (Mistral/vLLM specific)**
+`backend/agent/llm.py` — vLLM with Mistral-Small-24B returns tool calls as `[TOOL_CALLS][{...}]` in `msg.content` instead of the standard `msg.tool_calls` field. Added fallback parser that detects the `[TOOL_CALLS]` prefix and parses the JSON block. Result: tool calls now execute correctly instead of appearing as chat text.
+
+**Bug: 400 error on every 2nd query**
+Same file — the fallback path was hardcoding `"tc_fallback"` as the tool_call_id (10 chars, has underscore). vLLM requires exactly 9 alphanumeric characters `[a-zA-Z0-9]`. Fixed: `"".join(random.choices(string.ascii_letters + string.digits, k=9))`.
+
+**Bug (root cause): cross-source SQL always wrong — silent link mismatch**
+`backend/api/routes/source_groups.py` — links were stored with unqualified table names (`table_a: "customers"`) but `_apply_link_hints()` and `build_join_hint()` in `merged.py` compare against display keys like `"waggle_nyc.customers"`. They never matched, so all graph-drawn join information was silently ignored and the LLM had no FK context for cross-source queries. Fix: when creating a combined source, qualify link table names with their source alias: `table_a: "waggle_nyc.customers"`.
+
+**Bug: join hints never reached the SQL generation prompt**
+`backend/agent/tools/query_tool.py` — `build_join_hint()` existed in `merged.py` but was never called from the query pipeline. Added fetch + injection of join hints before `_generate_sql()`. Also replaced a bad few-shot example that showed joining NYC orders with NJ customers (wrong pattern) with a correct INNER JOIN on shared email.
+
+**Bug: `build_join_hint` used display format, not SQL format**
+`backend/connectors/merged.py` — hints were formatted as `waggle_nyc.customers.email JOIN ...` but the LLM must write `"waggle_nyc".public."customers"`. Added `to_sql(display_key)` helper that converts `alias.table` → `"alias".public."table"` (postgres format).
+
+**Bug: synthesis LLM hallucinated data when query failed**
+`backend/agent/runtime.py:_summarize_tool_result` — when a query fails after MAX_ATTEMPTS, the synthesis prompt said "explain the failure and suggest rephrasing". The LLM ignored this and made up plausible-looking numbers (the `$18,000/$12,000` case). Added explicit: `"DO NOT make up any numbers, totals, percentages, or data."`.
+
+**Feature: structured debug logging**
+`backend/agent/debug_log.py` (new) — `log(tag, *parts)` helper with `AGENT_DEBUG` env var toggle (`AGENT_DEBUG=0` silences in prod). Log calls added at every decision point in `llm.py`, `query_tool.py`, `runtime.py`. Tags: `LLM:IN`, `LLM:OUT`, `LLM:FALLBACK`, `SQL:CONTEXT`, `SQL:PROMPT`, `SQL:RESULT`, `SQL:ERROR`, `TURN:START`, `TURN:LOOP`, `TURN:CORRECT`, `TURN:TOOL`, `TURN:RETRY`, `TURN:SYNTH`.
+
+**Feature: chat history UI**
+- `backend/agent/session.py:summary()` — added `first_message` (first user turn, 80 chars) and `created_at` (unix timestamp) to the session list response. `GET /sessions?connection_id=X` now returns enough for the UI to show meaningful session titles.
+- `frontend/src/types/index.ts` — new `ChatSession` interface.
+- `frontend/src/lib/api.ts` — new `sessionService` with `list(connectionId)` and `get(sessionId)`.
+- `frontend/src/hooks/useSessions.ts` (new) — TanStack Query hook, 30s stale, no window-focus refetch.
+- `frontend/src/hooks/useChat.ts` — added `loadSession(sessionId)` that reconstructs full message history including tool call attachments (charts reload on loaded sessions).
+- `frontend/src/components/chat/SessionHistoryPanel.tsx` (new) — session list with relative timestamps ("5m ago", "2d ago"), turn count, active session highlight, "New chat" button.
+- `frontend/src/pages/ChatPage.tsx` — History toggle button (clock icon) in header; collapsible 220px left panel (desktop only); 3-column layout when open: `[History 220px] | [Chat 420px] | [Artifact fills rest]`.
+
+**Code quality sweep (from self-review):**
+- `debug_log.py`: removed unused `import json`, `ENABLED` now reads `AGENT_DEBUG` env var.
+- `_looks_hallucinated()`: added to `runtime.py` but **OR vs AND decision is still open** (see pending items).
+- `SessionHistoryPanel.tsx`: message count now `÷4` (not ÷2) and shows "turns" — 1 turn = 4 session records (user + [calling] + tool result + assistant answer).
+- `useChat.ts`: `loadSession` error toast now uses `extractError(err)` instead of generic string.
+- `useSessions.ts`: added `refetchOnWindowFocus: false`.
+
+**Files changed:**
+- Backend new: `backend/agent/debug_log.py`
+- Backend modified: `backend/agent/llm.py`, `backend/agent/runtime.py`, `backend/agent/tools/query_tool.py`, `backend/agent/session.py`, `backend/api/routes/source_groups.py`, `backend/connectors/merged.py`
+- Frontend new: `frontend/src/hooks/useSessions.ts`, `frontend/src/components/chat/SessionHistoryPanel.tsx`
+- Frontend modified: `frontend/src/types/index.ts`, `frontend/src/lib/api.ts`, `frontend/src/hooks/useChat.ts`, `frontend/src/pages/ChatPage.tsx`
+- Frontend modified (earlier in sprint): `frontend/src/components/graph/CreateCombinedSourceDialog.tsx` — filters invalid links (both source IDs must exist), disables Create button when `validLinks.length === 0`.
+
+**Pending from this session (not yet tested in browser):**
+1. Delete existing combined source from UI (has old unqualified links in config) → redraw the `customers.email ↔ customers.email` link → create new combined source → test "show me common customers between NY and NJ stores".
+2. **Bug 2 decision pending:** `_looks_hallucinated()` currently wired with `OR` (`_needs_tool OR _looks_hallucinated`) — this is too aggressive (any decimal number triggers it). Should be changed to `AND` so it only fires when the message is already a data question. Pending agreement before changing.
+3. Revenue-by-month inconsistency — Fix 1 from the plan (time-series SQL prompt hardening in `_SQL_SYSTEM` / `_SQL_PROMPT`) was designed but not applied. Add: "For time-based questions: use DATE_TRUNC('month', col), always ORDER BY time ASC, never add implicit date range filters."
+
+---
+
+### M8 — Cross-source linking — Sprint 1 status (2026-05-29)
+
+**What shipped:**
+- ✅ `waggle_app.source_links` table + CRUD (`auth/db.py`)
+- ✅ `waggle_app.source_groups` table + CRUD (`auth/db.py`)
+- ✅ `api/routes/source_links.py` — POST / GET / DELETE
+- ✅ `api/routes/source_groups.py` — POST / GET / DELETE (with combined source creation)
+- ✅ `connectors/merged.py` — DuckDB `:memory:` engine; postgres via `postgres_scanner`, DuckDB files as views; `fetch_with_config`, `extract_schema`, `build_join_hint`, `_apply_link_hints`
+- ✅ `connectors/adapters/` — `PostgresAdapter`, `DuckDBAdapter`, `get_adapter(source_type)`
+- ✅ `agent/tools/schema_tool.py` — dispatches to `merged.extract_schema` for combined sources
+- ✅ `agent/tools/query_tool.py` — dispatches to merged connector; injects `build_join_hint` into prompt
+- ✅ Frontend: `SourceGraphPage`, `SourceGraph` (react-flow canvas), `CreateCombinedSourceDialog`, `useSourceGroups`, `useSourceLinks` hooks
+- ✅ Demo databases: `waggle_nyc` and `waggle_nj` Postgres DBs seeded (`seed_beanbridge_nyc.sql`, `seed_beanbridge_nj.sql`) with ~10 tables, overlapping customers by email
+
+**What still needs testing:**
+- The full end-to-end query through a new combined source (with qualified links) hasn't been verified yet after today's fixes.
+
+---
+
+*Last updated: 2026-05-29 — Day 16: cross-source chat fixed (Mistral TOOL_CALLS parsing, tool_call_id, link qualification, join hint injection, synthesis hallucination prevention), chat history UI shipped (SessionHistoryPanel, useSessions, loadSession), debug logging added. `pnpm tsc --noEmit` clean. Open: Bug 2 (OR→AND decision), revenue time-series prompt hardening, end-to-end test of combined source with new qualified links.*

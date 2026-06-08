@@ -1,12 +1,13 @@
 import { useMemo, useState } from "react";
 import { useParams, useNavigate, Navigate } from "react-router-dom";
-import { ArrowLeft, Database, FileText, BarChart2, MessageSquare } from "lucide-react";
+import { ArrowLeft, Database, FileText, BarChart2, MessageSquare, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSource } from "@/hooks/useSources";
 import { useChat, getQueryResult } from "@/hooks/useChat";
 import { MessageList } from "@/components/chat/MessageList";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { CurrentArtifactPanel } from "@/components/chat/CurrentArtifactPanel";
+import { SessionHistoryPanel } from "@/components/chat/SessionHistoryPanel";
 
 export function ChatPage() {
   const { connectionId } = useParams<{ connectionId: string }>();
@@ -15,6 +16,7 @@ export function ChatPage() {
   const chat = useChat(connectionId ?? "");
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"chat" | "artifact">("chat");
+  const [showHistory, setShowHistory] = useState(false);
 
   const focusedMessage = useMemo(() => {
     if (selectedMessageId) {
@@ -48,6 +50,15 @@ export function ChatPage() {
     <header className="h-12 px-3 flex items-center gap-2 border-b border-[var(--color-border)] shrink-0">
       <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate("/dashboard")}>
         <ArrowLeft className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        className={`h-8 w-8 hidden md:inline-flex ${showHistory ? "text-[var(--color-primary)]" : ""}`}
+        onClick={() => setShowHistory((v) => !v)}
+        title="Chat history"
+      >
+        <History className="h-4 w-4" />
       </Button>
       <div className="min-w-0 flex-1">
         {isLoading ? (
@@ -94,6 +105,24 @@ export function ChatPage() {
 
   return (
     <div className="flex flex-col md:flex-row h-full min-h-0 overflow-hidden">
+      {/* History panel — desktop only, collapsible */}
+      {showHistory && connectionId && (
+        <aside className="hidden md:flex flex-col w-[220px] shrink-0 border-r border-[var(--color-border)] min-h-0">
+          <SessionHistoryPanel
+            connectionId={connectionId}
+            activeSessionId={chat.sessionId}
+            onLoadSession={(sid) => {
+              chat.loadSession(sid);
+              setSelectedMessageId(null);
+            }}
+            onNewChat={() => {
+              chat.reset();
+              setSelectedMessageId(null);
+            }}
+          />
+        </aside>
+      )}
+
       {/* Left: conversation — full width on mobile, fixed on desktop */}
       <section
         className={`flex flex-col w-full md:w-[420px] xl:w-[480px] md:shrink-0 min-h-0 border-r border-[var(--color-border)] bg-[var(--color-card)] ${

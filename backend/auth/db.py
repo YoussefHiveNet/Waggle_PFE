@@ -420,6 +420,12 @@ async def rename_source(source_id: str, user_id: str, new_label: str) -> dict | 
 async def delete_source(source_id: str, user_id: str) -> bool:
     pool = await get_app_pool()
     async with pool.acquire() as conn:
+        # Clean up dangling source_links referencing this source
+        await conn.execute(
+            "DELETE FROM waggle_app.source_links "
+            "WHERE user_id = $1 AND (source_a_id = $2 OR source_b_id = $2)",
+            user_id, source_id,
+        )
         result = await conn.execute(
             "DELETE FROM waggle_app.sources WHERE id = $1 AND user_id = $2",
             source_id, user_id,
