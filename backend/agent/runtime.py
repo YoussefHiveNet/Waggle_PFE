@@ -35,7 +35,7 @@ from connectors.store import get_source
 
 _engine = SemanticEngine()
 
-MAX_TURNS = 3
+MAX_TURNS = 2
 
 # ── TOOL DEFINITIONS (OpenAI function-calling format) ──────────────────────
 
@@ -96,10 +96,24 @@ _FOLLOWUP_PRONOUNS = frozenset({
     "now include", "add", "with their", "include their",
 })
 
+# Phrases that mean "tell me the structure" (table names / columns), not "run a data query".
+# Matching any of these makes _needs_tool return False so the LLM is free to pick
+# get_schema via the native tool definitions instead of being forced into query.
+_SCHEMA_PHRASES = (
+    "what tables", "which tables",
+    "list tables", "list the tables", "list all tables",
+    "give me a list of tables", "table of tables", "names of tables",
+    "table names", "schema of", "what's in the database",
+    "all the tables", "every table",
+)
+
 
 def _needs_tool(user_message: str, has_prior_data: bool) -> bool:
     """Return True if this message should trigger a query tool call."""
     t = user_message.lower()
+    # Schema-introspection phrasings: don't force the query tool.
+    if any(p in t for p in _SCHEMA_PHRASES):
+        return False
     if any(kw in t for kw in _DATA_KEYWORDS):
         return True
     if has_prior_data and any(p in t for p in _FOLLOWUP_PRONOUNS):
