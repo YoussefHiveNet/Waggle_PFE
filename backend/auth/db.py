@@ -100,6 +100,12 @@ async def init_db() -> None:
             "ALTER TABLE waggle_app.artifacts "
             "ADD COLUMN IF NOT EXISTS layout JSONB NOT NULL DEFAULT '{\"x\":0,\"y\":0,\"w\":2,\"h\":3}'"
         )
+        # cached_data: when present, artifact is static (schema list, etc.) and
+        # /artifacts/{id}/execute returns this directly instead of running SQL.
+        await conn.execute(
+            "ALTER TABLE waggle_app.artifacts "
+            "ADD COLUMN IF NOT EXISTS cached_data JSONB"
+        )
 
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS waggle_app.query_logs (
@@ -252,6 +258,7 @@ async def create_artifact(
     user_id: str, connection_id: str, name: str, question: str,
     sql: str, artifact_type: str, style_config: dict, refresh_schedule: str,
     dashboard_id: str | None = None,
+    cached_data: list | None = None,
 ) -> dict:
 
     pool = await get_app_pool()
@@ -260,12 +267,13 @@ async def create_artifact(
             """
             INSERT INTO waggle_app.artifacts
                 (user_id, connection_id, name, question, sql, artifact_type,
-                 style_config, refresh_schedule, dashboard_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
+                 style_config, refresh_schedule, dashboard_id, cached_data)
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb)
             RETURNING *
             """,
             user_id, connection_id, name, question, sql,
-            artifact_type, json.dumps(style_config), refresh_schedule, dashboard_id
+            artifact_type, json.dumps(style_config), refresh_schedule, dashboard_id,
+            json.dumps(cached_data) if cached_data is not None else None,
         )
         return dict(row)
 

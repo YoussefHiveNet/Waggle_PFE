@@ -12,7 +12,7 @@ import { ARTIFACT_TYPES } from "@/components/artifacts/ArtifactRenderer";
 import { useCreateArtifact } from "@/hooks/useArtifacts";
 import { useDashboards } from "@/hooks/useDashboards";
 import { toast } from "@/hooks/useToast";
-import type { ArtifactType, StyleConfig } from "@/types";
+import type { ArtifactType, Row, StyleConfig } from "@/types";
 
 interface Props {
   open: boolean;
@@ -20,13 +20,17 @@ interface Props {
   connectionId: string;
   question: string;
   sql: string;
+  /** Optional pre-computed rows. When sql is empty (schema result), these are
+   * sent as cached_data so the dashboard can render the artifact without
+   * running any SQL. */
+  rows?: Row[];
   defaultName: string;
   defaultType: ArtifactType;
   styleConfig: StyleConfig;
 }
 
 export function SaveArtifactDialog({
-  open, onOpenChange, connectionId, question, sql,
+  open, onOpenChange, connectionId, question, sql, rows,
   defaultName, defaultType, styleConfig,
 }: Props) {
   const [name, setName] = useState(defaultName);
@@ -46,6 +50,9 @@ export function SaveArtifactDialog({
         artifact_type: type,
         style_config: styleConfig,
         dashboard_id: dashboardId === "__default__" ? null : dashboardId,
+        // Static artifacts (no SQL — e.g. schema lists) carry their rows so
+        // the dashboard execute endpoint can return them without hitting the DB.
+        cached_data: sql ? null : rows ?? null,
       });
       toast({ description: `Saved "${name}" to your dashboard` });
       onOpenChange(false);

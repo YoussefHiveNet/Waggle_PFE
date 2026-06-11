@@ -1,5 +1,6 @@
 # api/routes/artifacts.py
 from __future__ import annotations
+import json
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -30,6 +31,7 @@ class ArtifactCreate(BaseModel):
     style_config:     dict = {}
     refresh_schedule: str = "daily"
     dashboard_id:     Optional[str] = None
+    cached_data:      Optional[list[dict]] = None
 
 class ArtifactUpdate(BaseModel):
     name:             Optional[str]  = None
@@ -64,6 +66,7 @@ async def save_artifact(
         style_config  = body.style_config,
         refresh_schedule = body.refresh_schedule,
         dashboard_id  = body.dashboard_id,
+        cached_data   = body.cached_data,
     )
     return _serialize(artifact)
 
@@ -120,6 +123,21 @@ async def execute_artifact(
     art = await get_artifact(artifact_id, user_id)
     if not art:
         raise HTTPException(status_code=404, detail="Artifact not found")
+
+    # Static artifact (schema list, etc.): return the stored rows directly,
+    # no source DB touched, no LLM, no SQL.
+    if art.get("cached_data") is not None:
+        rows = art["cached_data"]
+        # asyncpg returns JSONB as a string by default — decode if needed
+        if isinstance(rows, str):
+            rows = json.loads(rows)
+        last = art.get("updated_at") or art.get("created_at")
+        return {
+            "data": rows,
+            "row_count": len(rows),
+            "last_refreshed": last.isoformat() if hasattr(last, "isoformat") else last,
+        }
+
     src = await get_source_for_user(art["connection_id"], user_id)
     if not src:
         raise HTTPException(status_code=404, detail="Source not found")

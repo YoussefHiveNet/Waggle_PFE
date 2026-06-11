@@ -96,6 +96,7 @@ export function CurrentArtifactPanel({
         connectionId={connectionId}
         question={question}
         sql={result.sql}
+        rows={result.data}
         defaultName={question}
         defaultType={type}
         styleConfig={{}}

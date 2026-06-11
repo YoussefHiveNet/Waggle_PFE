@@ -112,6 +112,7 @@ export interface Artifact {
   last_refreshed: string | null;
   dashboard_id: string | null;
   layout: ArtifactLayout;
+  cached_data: Row[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -125,6 +126,7 @@ export interface ArtifactCreateRequest {
   style_config?: StyleConfig;
   refresh_schedule?: string;
   dashboard_id?: string | null;
+  cached_data?: Row[] | null;
 }
 
 export interface ArtifactUpdateRequest {

@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { extractError, queryService, sessionService } from "@/lib/api";
-import type { QueryToolResult, ToolCall } from "@/types";
+import type { QueryToolResult, Row, SchemaToolResult, ToolCall } from "@/types";
 import { toast } from "@/hooks/useToast";
 
 export interface ChatMessage {
@@ -152,9 +152,34 @@ export function useChat(connectionId: string, initialSessionId?: string) {
   return { ...state, send, reset, loadSession };
 }
 
-/** Pull the underlying query result out of a tool call, if it has one. */
+/** Pull the underlying query result out of a tool call, if it has one.
+ *
+ * Also adapts get_schema results into a synthetic QueryToolResult so the
+ * artifact panel can render "list all tables" as a one-column table without
+ * any panel- or renderer-side changes.
+ */
 export function getQueryResult(toolCall?: ToolCall): QueryToolResult | null {
-  if (!toolCall || toolCall.tool !== "query") return null;
+  if (!toolCall) return null;
+
+  // Schema tool — adapt {tables: ["a","b",...]} into {data: [{table_name:"a"}, ...]}
+  if (toolCall.tool === "get_schema") {
+    const r = toolCall.result;
+    if ("error" in r && r.error) return null;
+    const schema = r as SchemaToolResult;
+    const rows: Row[] = (schema.tables ?? []).map((name) => ({ table_name: name }));
+    if (rows.length === 0) return null;
+    return {
+      sql: "",
+      data: rows,
+      row_count: rows.length,
+      validation_report: { passed: true, checks: [], failures: [], confidence: 1 },
+      confidence: 1,
+      attempts: 1,
+    };
+  }
+
+  // Query tool — original behavior
+  if (toolCall.tool !== "query") return null;
   const r = toolCall.result as QueryToolResult;
   if ("error" in r && r.error) return null;
   return r;
