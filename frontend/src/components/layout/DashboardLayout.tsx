@@ -19,6 +19,7 @@ export function DashboardLayout() {
       toast({ variant: "destructive", description: extractError(err) });
     } finally {
       clearToken();
+      localStorage.removeItem("waggle.maybe_logged_in");
       navigate("/login", { replace: true });
     }
   }

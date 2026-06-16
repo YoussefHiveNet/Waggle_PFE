@@ -138,10 +138,10 @@ curl -s -w "\nHTTP %{http_code}\n" "$LLM_BASE_URL/models" \
 
 Both Postgres DBs live on `localhost:5432`, user `postgres`.
 
-| DB | Difficulty | Purpose |
-|---|---|---|
-| `waggle_demo` | Easy | 5 tables, ~3,750 rows, e-commerce |
-| `waggle_hard` | Hard | 50 tables, ~80k rows over 18 months |
+| DB            | Difficulty | Purpose                             |
+| ---------------| ------------| -------------------------------------|
+| `waggle_demo` | Easy       | 5 tables, ~3,750 rows, e-commerce   |
+| `waggle_hard` | Hard       | 50 tables, ~80k rows over 18 months |
 
 ### Reseed `waggle_hard` (idempotent — drops + recreates)
 ```bash

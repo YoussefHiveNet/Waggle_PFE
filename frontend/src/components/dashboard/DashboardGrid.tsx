@@ -22,18 +22,6 @@ interface Props {
   selectedSource: Source | null;
 }
 
-// Map stored layout.w → visual column span (1–3).
-// New values: 4→1, 8→2, 12→3. Old RGL values (0–12 scale) also handled.
-function toSpan(w: number | undefined): 1 | 2 | 3 {
-  if (!w || w <= 4) return 1;
-  if (w <= 8) return 2;
-  return 3;
-}
-
-// Map span (1–3) → stored layout.w
-function spanToW(span: 1 | 2 | 3): number {
-  return span === 1 ? 4 : span === 2 ? 8 : 12;
-}
 
 export function DashboardGrid({ selectedSource }: Props) {
   const connectionId = selectedSource?.connection_id;
@@ -68,20 +56,10 @@ export function DashboardGrid({ selectedSource }: Props) {
     const reordered = arrayMove(filtered, oldIdx, newIdx);
     reordered.forEach((a, i) => {
       if ((a.layout?.x ?? 0) !== i) {
-        const layout: ArtifactLayout = { ...a.layout, x: i, y: 0, w: a.layout?.w ?? 4, h: a.layout?.h ?? 3 };
+        const layout: ArtifactLayout = { ...a.layout, x: i, y: 0, w: 4, h: 3 };
         saveLayout({ id: a.id, layout });
       }
     });
-  }
-
-  function handleSpanChange(artifact: Artifact, span: 1 | 2 | 3) {
-    const layout: ArtifactLayout = {
-      x: artifact.layout?.x ?? 0,
-      y: 0,
-      w: spanToW(span),
-      h: artifact.layout?.h ?? 3,
-    };
-    saveLayout({ id: artifact.id, layout });
   }
 
   function handleCreateDashboard() {
@@ -159,17 +137,9 @@ export function DashboardGrid({ selectedSource }: Props) {
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={filtered.map((a) => a.id)} strategy={rectSortingStrategy}>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 auto-rows-[300px]">
-              {filtered.map((a) => {
-                const span = toSpan(a.layout?.w);
-                return (
-                  <SortableCard
-                    key={a.id}
-                    artifact={a}
-                    span={span}
-                    onSpanChange={(s) => handleSpanChange(a, s)}
-                  />
-                );
-              })}
+              {filtered.map((a) => (
+                <SortableCard key={a.id} artifact={a} />
+              ))}
             </div>
           </SortableContext>
         </DndContext>
@@ -178,19 +148,12 @@ export function DashboardGrid({ selectedSource }: Props) {
   );
 }
 
-function SortableCard({
-  artifact, span, onSpanChange,
-}: {
-  artifact: Artifact;
-  span: 1 | 2 | 3;
-  onSpanChange: (span: 1 | 2 | 3) => void;
-}) {
+function SortableCard({ artifact }: { artifact: Artifact }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: artifact.id });
   return (
     <div
       ref={setNodeRef}
       style={{
-        gridColumn: `span ${span}`,
         transform: CSS.Transform.toString(transform),
         transition,
         opacity: isDragging ? 0.4 : 1,
@@ -199,12 +162,7 @@ function SortableCard({
       className="min-w-0"
       {...attributes}
     >
-      <ArtifactCard
-        artifact={artifact}
-        span={span}
-        onSpanChange={onSpanChange}
-        dragHandleListeners={listeners}
-      />
+      <ArtifactCard artifact={artifact} dragHandleListeners={listeners} />
     </div>
   );
 }

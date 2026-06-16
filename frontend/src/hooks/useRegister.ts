@@ -13,6 +13,7 @@ export function useRegister() {
       setToken(access_token);
       const user = await authService.me();
       setUser(user);
+      localStorage.setItem("waggle.maybe_logged_in", "1");
     },
     onError: (err) => extractError(err),
   });

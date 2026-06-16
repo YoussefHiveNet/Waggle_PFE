@@ -13,7 +13,7 @@ from config import AuthConfig
 _bearer = HTTPBearer(auto_error=False)
 
 ACCESS_TTL  = timedelta(hours=24)
-REFRESH_TTL = timedelta(days=7)
+REFRESH_TTL = timedelta(days=30)
 
 
 def create_access_token(user_id: str) -> str:

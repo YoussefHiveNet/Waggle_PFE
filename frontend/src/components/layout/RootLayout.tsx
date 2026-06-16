@@ -17,12 +17,17 @@ export function RootLayout() {
 
     (async () => {
       try {
+        // Skip silent-refresh on fresh visits to avoid a noisy 401 in the
+        // console. We set this marker on login/register and clear it on
+        // logout — so a missing marker means "no chance of being logged in".
+        if (!localStorage.getItem("waggle.maybe_logged_in")) return;
         const { access_token } = await authService.refresh();
         setToken(access_token);
         const user = await authService.me();
         setUser(user);
       } catch {
-        // Not logged in — that's fine
+        // Refresh failed — the marker is stale; clear it so we don't try again
+        localStorage.removeItem("waggle.maybe_logged_in");
       } finally {
         setInitialized();
       }

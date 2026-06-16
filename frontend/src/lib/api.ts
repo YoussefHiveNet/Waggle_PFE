@@ -59,6 +59,7 @@ api.interceptors.response.use(
         return api(original);
       } catch {
         getStore().clearToken();
+        localStorage.removeItem("waggle.maybe_logged_in");
         window.location.href = "/login";
       }
     }
