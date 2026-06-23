@@ -13,3 +13,4 @@ bcrypt==4.0.1
 python-jose[cryptography]==3.5.0
 duckdb==1.4.4
 python-multipart==0.0.20
+pytz>=2024.1

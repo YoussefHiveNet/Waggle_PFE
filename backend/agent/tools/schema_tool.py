@@ -76,17 +76,27 @@ def format_for_llm(schema: dict, max_sample_rows: int = 2) -> str:
     Convert raw schema dict into a compact, token-efficient string
     the LLM can use for SQL generation and semantic modeling.
 
-    We deliberately exclude nullability, defaults, and row counts
-    from the LLM context — they add tokens without helping SQL gen.
+    For combined sources (table keys formatted as 'alias.table'), we
+    add a header that groups tables by source and highlights tables
+    that exist in multiple sources — this helps the LLM avoid picking
+    a single-source table (e.g. 'inventory') when a shared table
+    (e.g. 'products') is the right answer for a cross-source query.
     """
-    lines = []
+    lines: list[str] = []
+
+    # Combined-source detection + grouping header
+    if _is_combined_schema(schema):
+        lines.extend(_combined_header(schema))
+        lines.append("")
 
     for table_name, table_data in schema.items():
         row_count = table_data.get("row_count")
         row_info  = f" ({row_count:,} rows)" if row_count is not None else ""
         sql_name  = table_data.get("sql_name")
         sql_hint  = f"  [SQL: {sql_name}]" if sql_name else ""
-        lines.append(f"TABLE: {table_name}{row_info}{sql_hint}")
+        # Tag unified views so the LLM doesn't confuse them with base tables
+        prefix = "VIEW (unified)" if table_data.get("kind") == "unified_view" else "TABLE"
+        lines.append(f"{prefix}: {table_name}{row_info}{sql_hint}")
 
         for col in table_data["columns"]:
             flags = []
@@ -107,6 +117,65 @@ def format_for_llm(schema: dict, max_sample_rows: int = 2) -> str:
         lines.append("")  # spacing
 
     return "\n".join(lines)
+
+
+def _is_combined_schema(schema: dict) -> bool:
+    """True when every key looks like 'alias.table' (combined source)."""
+    return bool(schema) and all("." in k for k in schema)
+
+
+def _combined_header(schema: dict) -> list[str]:
+    """Build a 'tables grouped by source + shared tables + unified views' header for the LLM."""
+    by_source: dict[str, list[str]] = {}
+    unified_tables: list[str] = []
+    for key, data in schema.items():
+        if data.get("kind") == "unified_view":
+            # display key is 'unified.<table>'
+            _, _, table = key.partition(".")
+            unified_tables.append(f"unified_{table}")
+            continue
+        alias, _, table = key.partition(".")
+        by_source.setdefault(alias, []).append(table)
+
+    sources = sorted(by_source.keys())
+    table_sets = {alias: set(tables) for alias, tables in by_source.items()}
+
+    # Tables that exist in ALL component sources (the safest cross-source targets)
+    shared = sorted(set.intersection(*table_sets.values())) if len(sources) > 1 else []
+    only_in: dict[str, list[str]] = {
+        alias: sorted(t for t in by_source[alias] if t not in shared)
+        for alias in sources
+    }
+
+    out = [
+        "═══ COMBINED SOURCE — TABLE MAP ═══",
+        f"Component sources: {', '.join(sources)}",
+    ]
+    if shared:
+        out.append(
+            "SHARED TABLES (exist in every source): "
+            + ", ".join(shared)
+        )
+    for alias in sources:
+        if only_in[alias]:
+            out.append(f"ONLY in {alias}: {', '.join(only_in[alias])}")
+    if unified_tables:
+        out.append(
+            "UNIFIED VIEWS — PREFER THESE for any 'across stores' / 'across sources' question: "
+            + ", ".join(sorted(unified_tables))
+        )
+        out.append(
+            "  Each unified_<table> view = UNION ALL of every source's version, "
+            "with a `source` column identifying which source the row came from. "
+            "Use `WHERE source = 'X'`, `GROUP BY source`, or `HAVING COUNT(DISTINCT source) = N` patterns."
+        )
+    out.append(
+        "When the question is about a shared concept, prefer the UNIFIED VIEW — "
+        "do NOT substitute a single-source table just because its name sounds related, "
+        "and do NOT hand-author cross-source UNION ALLs when a unified view already exists."
+    )
+    out.append("═══════════════════════════════════")
+    return out
 
 def get_table_names(schema: dict) -> list[str]:
     return list(schema.keys())

@@ -146,6 +146,9 @@ async def execute_artifact(
         fetch_fn = _pg_fetch
     elif src["source_type"] == "duckdb":
         fetch_fn = _duck_fetch
+    elif src["source_type"] == "combined":
+        from connectors.merged import fetch_with_config as _merged_fetch
+        fetch_fn = _merged_fetch
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported source type: {src['source_type']}")
     try:

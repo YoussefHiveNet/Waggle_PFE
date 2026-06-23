@@ -19,11 +19,18 @@ from connectors.adapters import get_adapter
 # ── CORE ENGINE ───────────────────────────────────────────────────────────────
 
 async def _open_session(config: dict) -> duckdb.DuckDBPyConnection:
-    """Open a DuckDB :memory: session with all component sources materialized."""
+    """Open a DuckDB :memory: session with all component sources materialized.
+
+    After every source is attached we auto-create `unified_<table>` views
+    over tables that exist in 2+ sources. These give the LLM a single-table
+    SQL surface for cross-source questions and dramatically improve query
+    reliability — see _create_unified_views below.
+    """
     conn = duckdb.connect(database=":memory:", read_only=False)
     for src in config["component_sources"]:
         adapter = get_adapter(src["source_type"])
         await adapter.materialize(conn, src["config"], src["alias"])
+    await _create_unified_views(conn, config)
     return conn
 
 
@@ -102,13 +109,139 @@ async def extract_schema(config: dict) -> dict:
                         "sample_rows": sample_rows,
                         "sql_name":    qualified,
                     }
-                except Exception:
-                    # Table may be a view or temporarily unavailable — skip gracefully
-                    pass
+                except Exception as e:
+                    # Table introspection failed — skip but log so we don't silently
+                    # hide missing-dependency / type-mismatch / permission errors.
+                    print(f"[merged.extract_schema] SKIP {display_key}: {type(e).__name__}: {e}", flush=True)
+
+        # ── Add the auto-generated unified_<table> views ─────────────────────
+        try:
+            view_rows = conn.execute(
+                "SELECT view_name FROM duckdb_views() "
+                "WHERE schema_name='main' AND view_name LIKE 'unified_%'"
+            ).fetchall()
+        except Exception:
+            view_rows = []
+
+        for (view_name,) in view_rows:
+            try:
+                cols_raw = conn.execute(f'DESCRIBE "{view_name}"').fetchall()
+                columns = [
+                    {
+                        "name":        c[0],
+                        "type":        c[1],
+                        "nullable":    True,
+                        "primary_key": False,
+                        "foreign_key": None,
+                    }
+                    for c in cols_raw
+                ]
+                col_names = [c["name"] for c in columns]
+                sample_raw = conn.execute(
+                    f'SELECT * FROM "{view_name}" LIMIT 3'
+                ).fetchall()
+                sample_rows = []
+                for row in sample_raw:
+                    d = dict(zip(col_names, row))
+                    for k, v in d.items():
+                        if not isinstance(v, (str, int, float, bool, type(None))):
+                            d[k] = str(v)
+                    sample_rows.append(d)
+                row_count = conn.execute(
+                    f'SELECT COUNT(*) FROM "{view_name}"'
+                ).fetchone()[0]
+
+                schema[f"unified.{view_name[len('unified_'):]}"] = {
+                    "columns":     columns,
+                    "row_count":   row_count,
+                    "sample_rows": sample_rows,
+                    "sql_name":    view_name,
+                    "kind":        "unified_view",
+                }
+            except Exception:
+                pass
     finally:
         conn.close()
 
     return schema
+
+
+# ── UNIFIED VIEWS ─────────────────────────────────────────────────────────────
+
+async def _create_unified_views(conn: duckdb.DuckDBPyConnection, config: dict) -> None:
+    """Auto-emit `unified_<table>` views for tables that exist in 2+ sources.
+
+    Each view UNION ALLs the per-source versions of a table with a `source`
+    discriminator column. Only columns that exist in EVERY source-version of
+    the table are included (column intersection). This gives the LLM a clean
+    single-table surface for cross-source questions:
+
+        SELECT source, COUNT(*) FROM unified_customers GROUP BY source;
+
+    instead of having to author a cross-namespace UNION ALL itself.
+    """
+    from connectors.adapters import get_adapter
+
+    # Step 1: collect each source's tables and their columns
+    # source_columns[alias][table_name] = [col_name, ...]
+    source_columns: dict[str, dict[str, list[str]]] = {}
+    qualified_names: dict[str, dict[str, str]] = {}  # alias → table → qualified SQL ref
+
+    for src in config["component_sources"]:
+        alias = src["alias"]
+        adapter = get_adapter(src["source_type"])
+        try:
+            table_names = await adapter.get_tables(src["config"])
+        except Exception:
+            continue
+        source_columns[alias] = {}
+        qualified_names[alias] = {}
+
+        for table in table_names:
+            qualified = (
+                f'"{alias}".public."{table}"'
+                if src["source_type"] == "postgres"
+                else f'"{alias}"."{table}"'
+            )
+            qualified_names[alias][table] = qualified
+            try:
+                cols = conn.execute(f"DESCRIBE {qualified}").fetchall()
+                source_columns[alias][table] = [c[0] for c in cols]
+            except Exception:
+                continue
+
+    # Step 2: find tables present in 2+ sources
+    table_to_aliases: dict[str, list[str]] = {}
+    for alias, tables in source_columns.items():
+        for table in tables.keys():
+            table_to_aliases.setdefault(table, []).append(alias)
+
+    # Step 3: for each shared table, compute column intersection and emit view
+    for table, aliases in table_to_aliases.items():
+        if len(aliases) < 2:
+            continue
+
+        # Intersection of column names across all participating aliases
+        col_sets = [set(source_columns[a][table]) for a in aliases]
+        common_cols = sorted(set.intersection(*col_sets))
+        if not common_cols:
+            continue
+
+        # Build the UNION ALL SELECTs
+        view_name = f"unified_{table}"
+        col_list = ", ".join(f'"{c}"' for c in common_cols)
+        selects = []
+        for a in aliases:
+            qualified = qualified_names[a][table]
+            selects.append(f"SELECT '{a}' AS source, {col_list} FROM {qualified}")
+        ddl = f"CREATE OR REPLACE VIEW {view_name} AS\n" + "\nUNION ALL\n".join(selects)
+
+        try:
+            conn.execute(ddl)
+        except Exception:
+            # Defensive — if a column type mismatches across sources, the view
+            # creation will fail. Skip silently rather than break the whole session.
+            pass
 
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────

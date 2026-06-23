@@ -56,34 +56,70 @@ Rules:
 
 _CROSS_SOURCE_FEW_SHOT = """
 
-CROSS-SOURCE SQL RULES:
-- Use the exact [SQL: ...] name shown in the schema for every table reference
-- Always alias every table to avoid ambiguous column references across sources
-- Postgres sources: "alias".public."table"  |  DuckDB/file sources: "alias"."table"
+CROSS-SOURCE SQL RULES — read carefully:
 
-EXAMPLES:
--- Count from one source:
+★ PREFER `unified_<table>` VIEWS for any question asking about both/all sources
+  (common values, combined metrics, "across stores" comparisons). These are
+  auto-generated VIEWs that UNION ALL every source's version of a shared table
+  and add a `source` column identifying the origin. Filter / group by `source`
+  instead of hand-authoring cross-source UNIONs.
+
+- The TABLE MAP header at the top of the schema lists which unified views exist.
+- Use the qualified `"alias".public."table"` names only when the question is
+  specific to ONE source (e.g. "how many orders in NYC").
+- NEVER invent column names — every column used must appear in the schema.
+- If the question implies time (per month, by year, trend), use the real
+  timestamp column from the schema (e.g. `ordered_at`). Do not assume.
+
+EXAMPLE 1 — Count from one source:
 SELECT COUNT(*) AS order_count
-FROM "store1".public."orders" o;
+FROM "store1".public."orders";
 
--- Common rows between same-schema sources (overlap by shared natural key):
-SELECT c1.first_name, c1.last_name, c1.email,
-       c1.loyalty_pts AS store1_pts, c2.loyalty_pts AS store2_pts
-FROM "store1".public."customers" c1
-INNER JOIN "store2".public."customers" c2 ON c1.email = c2.email
-ORDER BY c1.last_name;
+EXAMPLE 2 — Common rows across sources (the "who shops in both stores?" pattern):
+SELECT email,
+       MIN(first_name) AS first_name,
+       MIN(last_name)  AS last_name
+FROM unified_customers
+GROUP BY email
+HAVING COUNT(DISTINCT source) = 2
+ORDER BY last_name;
 
--- Aggregation joining across both sources on shared SKU:
-SELECT p1.sku, p1.name,
-       COALESCE(SUM(oi1.quantity * oi1.unit_price), 0) AS store1_revenue,
-       COALESCE(SUM(oi2.quantity * oi2.unit_price), 0) AS store2_revenue
-FROM "store1".public."products" p1
-LEFT JOIN "store1".public."order_items" oi1 ON oi1.product_id = p1.id
-LEFT JOIN "store2".public."products" p2 ON p1.sku = p2.sku
-LEFT JOIN "store2".public."order_items" oi2 ON oi2.product_id = p2.id
-GROUP BY p1.sku, p1.name
-ORDER BY store1_revenue + store2_revenue DESC
-LIMIT 10;
+EXAMPLE 3 — Common SKUs across stores:
+SELECT sku, MIN(name) AS name
+FROM unified_products
+GROUP BY sku
+HAVING COUNT(DISTINCT source) = (SELECT COUNT(DISTINCT source) FROM unified_products)
+ORDER BY sku;
+
+EXAMPLE 4 — Compare a metric per shared SKU across sources (use unified views, pivot by `source`):
+WITH rev AS (
+  SELECT oi.source, p.sku, p.name,
+         oi.quantity * oi.unit_price AS amount
+  FROM unified_order_items oi
+  JOIN unified_products p
+    ON p.id = oi.product_id AND p.source = oi.source
+)
+SELECT sku,
+       MIN(name) AS name,
+       SUM(amount) FILTER (WHERE source = 'store1') AS store1_revenue,
+       SUM(amount) FILTER (WHERE source = 'store2') AS store2_revenue
+FROM rev
+GROUP BY sku
+ORDER BY store1_revenue + store2_revenue DESC NULLS LAST;
+
+EXAMPLE 5 — Combined metric over time across sources:
+SELECT DATE_TRUNC('month', ordered_at) AS month,
+       SUM(order_total - discount_amt) AS combined_revenue
+FROM unified_orders
+GROUP BY month
+ORDER BY month;
+
+EXAMPLE 6 — Per-source breakdown of any shared metric:
+SELECT source,
+       COUNT(*)              AS order_count,
+       SUM(order_total)      AS total
+FROM unified_orders
+GROUP BY source;
 """
 
 
