@@ -1,9 +1,26 @@
 # connectors/postgres.py
 from __future__ import annotations
+from urllib.parse import quote_plus
 import asyncpg
 from config import DBConfig
 
 _pool = None
+
+
+def _build_dsn(
+    user: str, password: str, host: str, port: int, database: str,
+    sslmode: str | None = None,
+) -> str:
+    """Build a Postgres DSN, optionally with sslmode for cloud DBs (CockroachDB, Neon, etc.).
+    Passwords are URL-encoded so special chars don't break the DSN."""
+    base = (
+        f"postgresql://{quote_plus(user)}:{quote_plus(password)}"
+        f"@{host}:{port}/{database}"
+    )
+    if sslmode:
+        base += f"?sslmode={sslmode}"
+    return base
+
 
 async def get_pool():
     global _pool
@@ -19,9 +36,9 @@ async def fetch(sql: str, *args) -> list[dict]:
         return [dict(r) for r in rows]
 
 async def fetch_with_config(config: dict, sql: str) -> list[dict]:
-    dsn = (
-        f"postgresql://{config['user']}:{config['password']}"
-        f"@{config['host']}:{config['port']}/{config['database']}"
+    dsn = _build_dsn(
+        config["user"], config["password"], config["host"],
+        config["port"], config["database"], config.get("sslmode"),
     )
     conn = await asyncpg.connect(dsn)
     try:
@@ -32,9 +49,10 @@ async def fetch_with_config(config: dict, sql: str) -> list[dict]:
 
 async def test_connection(
     host: str, port: int, user: str,
-    password: str, database: str
+    password: str, database: str,
+    sslmode: str | None = None,
 ) -> tuple[bool, str]:
-    dsn = f"postgresql://{user}:{password}@{host}:{port}/{database}"
+    dsn = _build_dsn(user, password, host, port, database, sslmode)
     try:
         conn = await asyncpg.connect(dsn, timeout=5)
         await conn.fetchval("SELECT 1")
@@ -48,9 +66,9 @@ async def extract_schema(config: dict) -> dict:
     Extract full schema from a connected PostgreSQL database.
     Returns tables with columns, types, PKs, FKs and sample rows.
     """
-    dsn = (
-        f"postgresql://{config['user']}:{config['password']}"
-        f"@{config['host']}:{config['port']}/{config['database']}"
+    dsn = _build_dsn(
+        config["user"], config["password"], config["host"],
+        config["port"], config["database"], config.get("sslmode"),
     )
     conn = await asyncpg.connect(dsn)
 

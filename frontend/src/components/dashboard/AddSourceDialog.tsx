@@ -273,13 +273,16 @@ function PostgresTab({ onCreated }: { onCreated: (id: string) => void }) {
     password: "",
     database: "",
     label: "",
+    useSsl: false,
   });
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const { useSsl, ...rest } = form;
     const res = await connect.mutateAsync({
-      ...form,
-      label: form.label || undefined,
+      ...rest,
+      label:   rest.label || undefined,
+      sslmode: useSsl ? "require" : undefined,
     });
     toast({ description: res.message });
     onCreated(res.connection_id);
@@ -336,6 +339,26 @@ function PostgresTab({ onCreated }: { onCreated: (id: string) => void }) {
           onChange={(e) => setForm({ ...form, label: e.target.value })}
         />
       </div>
+
+      {/* SSL toggle — required for cloud Postgres (CockroachDB Serverless, Neon, Supabase, RDS) */}
+      <label
+        htmlFor="pg-ssl"
+        className="flex items-start gap-2.5 mt-1 cursor-pointer select-none rounded-md border border-[var(--color-border)] bg-[var(--color-muted)]/30 px-3 py-2.5 hover:bg-[var(--color-muted)]/50 transition-colors"
+      >
+        <input
+          id="pg-ssl"
+          type="checkbox"
+          className="mt-0.5 h-4 w-4 accent-[var(--color-primary)]"
+          checked={form.useSsl}
+          onChange={(e) => setForm({ ...form, useSsl: e.target.checked })}
+        />
+        <span className="text-sm">
+          <span className="font-medium text-[var(--color-foreground)]">Enable SSL</span>
+          <span className="block text-xs text-[var(--color-muted-foreground)] mt-0.5">
+            Required for cloud Postgres — CockroachDB, Neon, Supabase, AWS RDS, Azure DB
+          </span>
+        </span>
+      </label>
 
       <div className="flex justify-end pt-2">
         <Button type="submit" disabled={connect.isPending}>

@@ -54,6 +54,8 @@ export interface ConnectRequest {
   password: string;
   database: string;
   label?: string;
+  /** Optional sslmode for cloud Postgres (CockroachDB, Neon, Supabase, RDS). */
+  sslmode?: string;
 }
 
 export interface ConnectResponse {

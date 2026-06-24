@@ -18,6 +18,7 @@ class ConnectRequest(BaseModel):
     password: str
     database: str
     label:    Optional[str] = None  # display name; defaults to database
+    sslmode:  Optional[str] = None  # e.g. "require" or "verify-full" for cloud PG (CockroachDB, Neon, Supabase)
 
 
 class ConnectResponse(BaseModel):
@@ -36,6 +37,7 @@ async def connect(
     ok, error = await test_connection(
         host=req.host, port=req.port,
         user=req.user, password=req.password, database=req.database,
+        sslmode=req.sslmode,
     )
     if not ok:
         raise HTTPException(
@@ -44,17 +46,20 @@ async def connect(
         )
 
     label  = req.label or req.database
+    config: dict = {
+        "host":     req.host,
+        "port":     req.port,
+        "user":     req.user,
+        "password": req.password,
+        "database": req.database,
+    }
+    if req.sslmode:
+        config["sslmode"] = req.sslmode
     source = await save_source(
         user_id=user_id,
         label=label,
         source_type="postgres",
-        config={
-            "host":     req.host,
-            "port":     req.port,
-            "user":     req.user,
-            "password": req.password,
-            "database": req.database,
-        },
+        config=config,
     )
 
     return ConnectResponse(
