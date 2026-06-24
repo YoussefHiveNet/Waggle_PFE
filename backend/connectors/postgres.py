@@ -54,12 +54,16 @@ async def test_connection(
 ) -> tuple[bool, str]:
     dsn = _build_dsn(user, password, host, port, database, sslmode)
     try:
-        conn = await asyncpg.connect(dsn, timeout=5)
+        # 15s — generous for cloud DBs over the public internet (TLS handshake + auth)
+        conn = await asyncpg.connect(dsn, timeout=15)
         await conn.fetchval("SELECT 1")
         await conn.close()
         return True, ""
     except Exception as e:
-        return False, str(e)
+        # Always include the exception type — some asyncpg / asyncio errors have
+        # empty str(e) which would have produced an unhelpful "Could not connect: "
+        msg = str(e).strip()
+        return False, f"{type(e).__name__}{': ' + msg if msg else ''}"
 
 async def extract_schema(config: dict) -> dict:
     """
