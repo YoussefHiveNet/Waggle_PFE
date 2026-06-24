@@ -59,6 +59,13 @@ export function ArtifactCard({ artifact, dragHandleListeners }: Props) {
   const rows = data?.data ?? null;
   const errorMsg = error ? extractError(error) : null;
 
+  // Defensive: old cached payloads from before the backend JSONB-decode fix
+  // may still have style_config / layout as strings. Parse if needed.
+  const styleConfig =
+    typeof artifact.style_config === "string"
+      ? (() => { try { return JSON.parse(artifact.style_config as unknown as string); } catch { return {}; } })()
+      : (artifact.style_config ?? {});
+
   return (
     <>
       <div className="group relative flex flex-col h-full w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] overflow-hidden hover:shadow-md transition-shadow">
@@ -114,7 +121,7 @@ export function ArtifactCard({ artifact, dragHandleListeners }: Props) {
             <ArtifactRenderer
               type={artifact.artifact_type}
               data={rows}
-              styleConfig={artifact.style_config}
+              styleConfig={styleConfig}
               name={artifact.name}
             />
           ) : (

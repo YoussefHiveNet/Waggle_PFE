@@ -46,7 +46,21 @@ class ArtifactUpdate(BaseModel):
 
 # Row serialization lives in util.serialize — single source of truth for
 # converting asyncpg rows (Decimal, date, UUID, …) to JSON-safe dicts.
-_serialize = serialize_row
+# We additionally decode JSONB columns that asyncpg returns as strings,
+# so the frontend gets real objects/arrays for style_config, layout, and cached_data.
+_JSONB_FIELDS = ("style_config", "layout", "cached_data")
+
+
+def _serialize(row: dict) -> dict:
+    d = serialize_row(row)
+    for field in _JSONB_FIELDS:
+        v = d.get(field)
+        if isinstance(v, str):
+            try:
+                d[field] = json.loads(v)
+            except Exception:
+                pass
+    return d
 
 
 # ── ENDPOINTS ─────────────────────────────────────────────────────────────────
@@ -94,9 +108,12 @@ async def edit_artifact(
     body: ArtifactUpdate,
     user_id: str = Depends(get_current_user)
 ):
+    # exclude_unset → only fields the client explicitly sent get updated.
+    # This lets the client pass empty strings (e.g. refresh_schedule="") to
+    # clear values without accidentally clearing fields they didn't touch.
     updated = await update_artifact(
         artifact_id, user_id,
-        **{k: v for k, v in body.model_dump().items() if v is not None}
+        **body.model_dump(exclude_unset=True),
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Artifact not found")

@@ -27,6 +27,16 @@ const ARTIFACT_TYPES: ArtifactType[] = [
   "metric", "table", "bar", "line", "area", "pie", "scatter", "progress",
 ];
 
+/** Backend now returns style_config as an object, but tolerate old cached
+ *  stringified payloads so the editor doesn't break mid-session. */
+function _normaliseStyle(s: unknown): StyleConfig {
+  if (!s) return {};
+  if (typeof s === "string") {
+    try { return JSON.parse(s) as StyleConfig; } catch { return {}; }
+  }
+  return s as StyleConfig;
+}
+
 // Schedule string format: "every:<seconds>s" or null/empty = off.
 const SCHEDULE_OPTIONS = [
   { label: "Off", value: "" },
@@ -44,7 +54,8 @@ export function ArtifactEditorSheet({ artifact, open, onOpenChange }: Props) {
   const [name, setName] = useState(artifact.name);
   const [question, setQuestion] = useState(artifact.question);
   const [type, setType] = useState<ArtifactType>(artifact.artifact_type);
-  const [style, setStyle] = useState<StyleConfig>(artifact.style_config ?? {});
+  const [sql, setSql] = useState(artifact.sql);
+  const [style, setStyle] = useState<StyleConfig>(_normaliseStyle(artifact.style_config));
   const [schedule, setSchedule] = useState(artifact.refresh_schedule ?? "");
   const [rerunning, setRerunning] = useState(false);
 
@@ -54,7 +65,8 @@ export function ArtifactEditorSheet({ artifact, open, onOpenChange }: Props) {
       setName(artifact.name);
       setQuestion(artifact.question);
       setType(artifact.artifact_type);
-      setStyle(artifact.style_config ?? {});
+      setSql(artifact.sql);
+      setStyle(_normaliseStyle(artifact.style_config));
       setSchedule(artifact.refresh_schedule ?? "");
     }
   }, [artifact.id, open]);
@@ -67,15 +79,18 @@ export function ArtifactEditorSheet({ artifact, open, onOpenChange }: Props) {
 
   async function handleSave() {
     const questionChanged = question.trim() !== artifact.question.trim();
-    let newSql = artifact.sql;
+    const sqlChanged      = sql.trim()      !== artifact.sql.trim();
+    let finalSql = sql;
 
-    if (questionChanged) {
+    // Only re-run if the question changed AND the user did NOT manually edit the SQL
+    // (an edited SQL is presumed intentional and we keep it verbatim).
+    if (questionChanged && !sqlChanged) {
       setRerunning(true);
       try {
         const res = await queryService.run(artifact.connection_id, { question });
         const tc: ToolCall | undefined = res.tool_calls[0];
         if (tc?.tool === "query" && !("error" in tc.result)) {
-          newSql = (tc.result as QueryToolResult).sql;
+          finalSql = (tc.result as QueryToolResult).sql;
         } else {
           toast({
             variant: "destructive",
@@ -96,10 +111,10 @@ export function ArtifactEditorSheet({ artifact, open, onOpenChange }: Props) {
         body: {
           name,
           question,
-          sql: newSql,
+          sql: finalSql,
           artifact_type: type,
           style_config: style,
-          refresh_schedule: schedule || undefined,
+          refresh_schedule: schedule,  // empty string = no schedule (NOT undefined — backend would skip)
         },
       },
       {
@@ -147,10 +162,18 @@ export function ArtifactEditorSheet({ artifact, open, onOpenChange }: Props) {
               </p>
             </div>
             <div className="space-y-1.5">
-              <Label>Stored SQL</Label>
-              <pre className="text-xs bg-[var(--color-muted)] rounded p-2 overflow-x-auto">
-                {artifact.sql}
-              </pre>
+              <Label htmlFor="art-sql">SQL</Label>
+              <textarea
+                id="art-sql"
+                value={sql}
+                onChange={(e) => setSql(e.target.value)}
+                rows={8}
+                spellCheck={false}
+                className="w-full rounded-md border border-[var(--color-input)] bg-[var(--color-muted)] px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+              />
+              <p className="text-xs text-[var(--color-muted-foreground)]">
+                Editing the SQL directly skips the LLM. The new query is saved verbatim.
+              </p>
             </div>
           </TabsContent>
 
